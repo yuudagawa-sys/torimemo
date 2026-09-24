@@ -294,6 +294,8 @@ main{padding:0 var(--pad) 28px}
   font-family:var(--mono); font-size:10px; letter-spacing:.12em;
   color:var(--ink3); text-transform:uppercase;
 }
+/* ファイル名は大文字に変えない。元の綴りのまま読ませる */
+.label .asis{text-transform:none; letter-spacing:.04em}
 .inp, .ta, .sel{
   width:100%; background:var(--card); border:1px solid var(--line2);
   border-radius:var(--r); padding:9px 11px; font-size:14.5px;
@@ -848,6 +850,32 @@ body{padding-top:env(safe-area-inset-top)}
 /* ドックが低くなったぶん、本文の下余白を詰める */
 body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 .toast{ bottom:calc(98px + env(safe-area-inset-bottom)); }
+
+/* ================= 書類（PDF・文書・表・スライド） ================= */
+.filetile{
+  width:100%; height:100%; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:7px;
+  padding:12px 10px; background:var(--card); overflow:hidden; text-align:center;
+}
+.filetile svg{width:30px; height:30px; color:var(--ink3); flex:0 0 auto}
+.filetile .fext{
+  font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--paper);
+  background:var(--ink); border-radius:999px; padding:2px 8px; flex:0 0 auto;
+}
+.filetile .fname{
+  font-size:10.5px; line-height:1.45; color:var(--ink2);
+  overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  word-break:break-all;
+}
+.filetile.big{
+  border:1px solid var(--line); border-radius:var(--r);
+  padding:34px 18px; gap:11px; min-height:190px;
+}
+.filetile.big svg{width:46px; height:46px}
+.filetile.big .fext{font-size:11px; padding:3px 11px}
+.filetile.big .fname{font-size:13px; -webkit-line-clamp:3}
+.slidemedia.fileonly{background:var(--card); display:grid; place-items:center; padding:18px}
+.htext.hfile{font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; word-break:break-all}
 
 /* ================= 文字だけのメモ ================= */
 .texttile{

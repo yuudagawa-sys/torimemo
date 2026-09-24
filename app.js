@@ -1203,6 +1203,7 @@
             var inner;
             if (it.kind === "photo" && src) inner = '<img src="' + src + '" loading="lazy" alt="">';
             else if (it.kind === "video" && src) inner = '<video src="' + src + '#t=0.1" preload="metadata" muted playsinline></video>';
+            else if (it.kind === "file") inner = '<div class="htext hfile">' + esc(fileMark(it)) + "<br>" + esc((it.name || "").slice(0, 40)) + "</div>";
             else inner = '<div class="htext">' + esc((it.memo || "（メモなし）").slice(0, 60)) + "</div>";
             out.push('<button class="hit" data-hit="' + esc(it.id) + '" data-hitex="' + esc(it.exId) + '">'
               + inner + '<span class="hwhere">' + esc(ex ? ex.name : "") + "</span></button>");
@@ -1238,7 +1239,7 @@
         stage.innerHTML = '<div class="nothing">この条件に合う写真はありません。</div>';
       } else {
         stage.innerHTML = '<div class="blank"><h2>' + esc((exById(curEx) || {}).name || "") + " はまだ空です</h2>"
-          + '<p>下の <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・メモを追加できます。'
+          + '<p>下の <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・書類・メモを追加できます。'
           + "現場ではまず撮って放り込むだけで大丈夫です。整理は帰ってからまとめてやれます。</p></div>";
       }
       return;
@@ -1265,6 +1266,9 @@
         } else if (it.kind === "text") {
           body = '<div class="texttile">'
             + '<div class="tt">' + (it.memo ? esc(it.memo) : '<span class="ttempty">（空のメモ）</span>') + "</div></div>";
+        } else if (it.kind === "file") {
+          body = fileTile(it);
+          pips += '<span class="pip"><svg><use href="#i-doc"/></svg></span>';
         } else {
           var bars = "";
           for (var k = 0; k < 16; k++) {
@@ -1412,6 +1416,7 @@
   $("fileIn").onchange = function () { addPhotos(this.files); this.value = ""; };
   $("videoIn").onchange = function () { importMedia(this.files, "video"); this.value = ""; };
   $("audioIn").onchange = function () { importMedia(this.files, "audio"); this.value = ""; };
+  $("docIn").onchange   = function () { importDocs(this.files); this.value = ""; };
   $("skinIn").onchange = function () { saveSkin(this.files && this.files[0]); this.value = ""; };
 
   /* 音声・動画の長さを読む。読めなければ0を返す */
@@ -1434,6 +1439,53 @@
       };
       el.onerror = function () { clearTimeout(timer); done(0); };
       el.src = url;
+    });
+  }
+
+  /* PDF・文書・表・スライドなどを、そのままの形で持つ。中身は開かない */
+  function importDocs(files) {
+    if (!curEx) { toast("先に" + LL() + "をつくってください。", true); newExDialog(); return; }
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var exAt = curEx;
+    var tAt = (curTag !== "all" && curTag !== "none") ? [curTag] : [];
+    var total = list.reduce(function (a, f) { return a + (f.size || 0); }, 0);
+
+    var done = 0, failed = 0, lastErr = "", added = [];
+    progress(3);
+    toast(list.length + " 件を取り込んでいます…（" + mb(total) + "）");
+    var chain = Promise.resolve();
+    list.forEach(function (f, n) {
+      chain = chain.then(function () {
+        var bid = uid();
+        var rec = {
+          id: uid(), exId: exAt, kind: "file",
+          blobId: bid, thumbId: null,
+          mime: f.type || "application/octet-stream",
+          memo: "", tags: tAt.slice(), fav: false,
+          bytes: f.size || 0, name: f.name || "",
+          createdAt: Date.now() + n
+        };
+        return DB.putMany([
+          ["blobs", { id: bid, blob: f }],
+          ["items", rec]
+        ]).then(function () {
+          if (exAt === curEx) items.push(rec);
+          if (browseAll) browseAll.push(rec);
+          added.push(rec.id);
+          done++;
+        }, function (e) { failed++; lastErr = why(e); });
+      }).then(function () {
+        progress(3 + Math.round(((done + failed) / list.length) * 94));
+      });
+    });
+    chain.then(function () {
+      progress(100);
+      if (exAt === curEx) { items.sort(function (x, y) { return (x.createdAt || 0) - (y.createdAt || 0); }); paint(); }
+      gauge();
+      if (failed && !done) toast(failed + " 件とも失敗：" + lastErr, true);
+      else if (failed) toast(done + " 件を取り込み（" + failed + " 件失敗：" + lastErr + "）", true);
+      else { toast(done + " 件を取り込みました（" + mb(total) + "）"); tagPrompt(added); }
     });
   }
 
@@ -1513,7 +1565,8 @@
       { g: "端末から取り込む", rows: [
         { k: "pick",   t: "写真", d: "カメラロールから。まとめて何枚でも",          i: "i-plus" },
         { k: "impVid", t: "動画", d: "撮りためた動画をそのまま。変換しません",       i: "i-vid" },
-        { k: "impAud", t: "音声", d: "ボイスメモや録音ファイルをそのまま",           i: "i-mic" }
+        { k: "impAud", t: "音声", d: "ボイスメモや録音ファイルをそのまま",           i: "i-mic" },
+        { k: "impDoc", t: "書類", d: "PDF・文書・表・スライドなど。そのままの形で",   i: "i-doc" }
       ]},
       { g: "そのほか", rows: [
         { k: "text", t: "メモ", d: "写真なしで、文字だけ書き留める",              i: "i-note" },
@@ -1541,6 +1594,7 @@
         else if (k === "pick") $("fileIn").click();
         else if (k === "impVid") $("videoIn").click();
         else if (k === "impAud") $("audioIn").click();
+        else if (k === "impDoc") $("docIn").click();
         else if (k === "text") addTextMemo();
         else if (k === "note") newExDialog();
         else record(k);
@@ -2355,9 +2409,31 @@
     setTimeout(function () { var e = $("tgIn"); if (e) { e.focus(); e.select(); } }, 60);
   }
 
+  /* 種類の呼び名。あちこちで同じ判定を書かないための一本化 */
+  function kindName(k) {
+    return k === "photo" ? "写真" : k === "video" ? "動画"
+         : k === "text" ? "メモ" : k === "file" ? "書類" : "録音";
+  }
+  /* 書類の見出しに出す短い記号。PDF・XLSX など */
+  function fileMark(it) {
+    var e = extOf(it);
+    return (e || "FILE").toUpperCase().slice(0, 5);
+  }
+  /* 書類のタイル。一覧でも1点の画面でも同じ形 */
+  function fileTile(it, big) {
+    return '<div class="filetile' + (big ? " big" : "") + '">'
+      + '<svg><use href="#i-doc"/></svg>'
+      + '<div class="fext">' + esc(fileMark(it)) + "</div>"
+      + '<div class="fname">' + esc(it.name || "名前のない書類") + "</div></div>";
+  }
+
   /* 保存するときの拡張子。取り込んだファイルは元の名前・形式を尊重する */
   function extOf(it) {
     if (it.kind === "photo") return "jpg";
+    if (it.kind === "file") {
+      var fn = String(it.name || "").match(/\.([A-Za-z0-9]{1,8})$/);
+      return fn ? fn[1].toLowerCase() : "dat";
+    }
     var n = String(it.name || "");
     var m = n.match(/\.([A-Za-z0-9]{2,5})$/);
     if (m) return m[1].toLowerCase();
@@ -2552,9 +2628,10 @@
       if (it.kind === "photo") media = '<img class="shot" id="mShot" src="' + src + '" alt="">';
       else if (it.kind === "video") media = '<video class="play" id="mShot" src="' + src + '" controls playsinline preload="metadata"></video>';
       else if (it.kind === "text") media = "";
+      else if (it.kind === "file") media = fileTile(it, true) + '<button class="ghost" id="mOpen" style="justify-self:start">この書類を開く</button>';
       else media = '<audio src="' + src + '" controls preload="metadata"></audio>';
 
-      var kindJa = it.kind === "photo" ? "写真" : it.kind === "video" ? "動画" : it.kind === "text" ? "メモ" : "録音";
+      var kindJa = kindName(it.kind);
       var stamp = new Date(it.createdAt || Date.now());
 
       sheet('<div class="panel-head">'
@@ -2576,7 +2653,7 @@
         + " " + pad2(stamp.getHours()) + ":" + pad2(stamp.getMinutes())
         + (it.bytes ? " ・ " + mb(it.bytes) : "") + (it.durMs ? " ・ " + clock(it.durMs) : "")
         + (it.w ? " ・ " + it.w + "×" + it.h : "")
-        + (it.name ? " ・ " + esc(it.name) : "") + "</div>"
+        + (it.name ? ' ・ <span class="asis">' + esc(it.name) + "</span>" : "") + "</div>"
         + "</div>"
         + '<div class="panel-foot">'
         + '<button class="danger" id="mDel">削除</button>'
@@ -2601,6 +2678,18 @@
       }
       var shot = $("mShot");
       if (shot) attachSwipe(shot, function () { step(-1); }, function () { step(1); });
+
+      var op = $("mOpen");
+      if (op) op.onclick = function () {
+        /* 中身はこのアプリでは開かない。端末の持っているアプリに任せる */
+        DB.get("blobs", it.blobId).then(function (r) {
+          if (!r || !r.blob) throw new Error("元のデータが見つかりませんでした。");
+          var u = URL.createObjectURL(r.blob);
+          var w = window.open(u, "_blank");
+          if (!w) { var link = document.createElement("a"); link.href = u; link.download = it.name || ("書類." + extOf(it)); link.click(); }
+          setTimeout(function () { URL.revokeObjectURL(u); }, 60000);
+        }).catch(function (e) { toast(why(e), true); });
+      };
 
       var tags = (it.tags || []).slice();
       function sugHtml() {
@@ -2700,10 +2789,13 @@
       var dl = $("mDl");
       if (dl) dl.onclick = function () {
         var ext = extOf(it);
-        var base = safeName((exById(curEx) || {}).name) + "_" + pad2(pos);
+        /* 取り込んだ書類は、元のファイル名のまま渡す。相手が探しやすい */
+        var fname = (it.kind === "file" && it.name)
+          ? it.name
+          : safeName((exById(curEx) || {}).name) + "_" + pad2(pos) + "." + ext;
         DB.get("blobs", it.blobId).then(function (r) {
           if (!r || !r.blob) throw new Error("元のデータが見つかりませんでした。");
-          return handOver(r.blob, base + "." + ext);
+          return handOver(r.blob, fname);
         }).then(function (how) {
           if (how !== "cancel") toast("書き出しました");
         }).catch(function (e) { toast(why(e), true); });
@@ -2728,16 +2820,18 @@
     L.push(list.length + " 点（写真 " + list.filter(function (i) { return i.kind === "photo"; }).length
       + " ／ 録音 " + list.filter(function (i) { return i.kind === "audio"; }).length
       + " ／ 動画 " + list.filter(function (i) { return i.kind === "video"; }).length
-      + " ／ メモ " + list.filter(function (i) { return i.kind === "text"; }).length + "）");
+      + " ／ メモ " + list.filter(function (i) { return i.kind === "text"; }).length
+      + " ／ 書類 " + list.filter(function (i) { return i.kind === "file"; }).length + "）");
     L.push("");
 
     list.forEach(function (it, n) {
-      var kindJa = it.kind === "photo" ? "写真" : it.kind === "video" ? "動画" : it.kind === "text" ? "メモ" : "録音";
+      var kindJa = kindName(it.kind);
       var t = new Date(it.createdAt || 0);
       L.push("");
       L.push("## " + pad2(n + 1) + ". " + kindJa
         + "（" + pad2(t.getHours()) + ":" + pad2(t.getMinutes())
-        + (it.durMs ? " ・ " + clock(it.durMs) : "") + "）" + (it.fav ? " ★" : ""));
+        + (it.durMs ? " ・ " + clock(it.durMs) : "") + "）" + (it.fav ? " ★" : "")
+        + (it.kind === "file" && it.name ? "\n" + it.name : ""));
       if (it.memo) L.push(it.memo);
       if (it.tags && it.tags.length) L.push((it.tags || []).map(function (x) { return "#" + x; }).join(" "));
     });
@@ -2765,7 +2859,7 @@
       + '<button class="iconbtn" id="xClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
       + '<button class="rowbtn" id="xZip"><div><b>写真とメモ（ZIP）</b>'
-      + "<span>写真・動画・録音をまとめて、メモも同梱。相手がとりメモを使っていなくても開けます。</span></div>"
+      + "<span>写真・動画・録音・書類をまとめて、メモも同梱。相手がとりメモを使っていなくても開けます。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="xMd"><div><b>メモだけ（Markdown）</b>'
       + "<span>撮った順に並べた文章。原稿を書くときはこれ。</span></div>"
@@ -2813,7 +2907,10 @@
         if (!it.blobId) return;
         var ext = extOf(it);
         var head = (it.memo || "").split("\n")[0].slice(0, 24);
-        var nm = folder + "/" + pad2(n + 1) + (head ? "_" + safeName(head) : "") + "." + ext;
+        /* 書類は元のファイル名を残す。相手が中身を推し量れるように */
+        var nm = (it.kind === "file" && it.name)
+          ? folder + "/" + pad2(n + 1) + "_" + safeName(it.name.replace(/\.[^.]+$/, "")) + "." + ext
+          : folder + "/" + pad2(n + 1) + (head ? "_" + safeName(head) : "") + "." + ext;
         while (seen[nm]) nm = nm.replace(/(\.\w+)$/, "_" + Math.floor(Math.random() * 99) + "$1");
         seen[nm] = 1;
         jobs.push({ name: nm, blobId: it.blobId, date: new Date(it.createdAt || Date.now()) });
@@ -3087,6 +3184,8 @@
         media = '<video src="' + src + '" controls playsinline preload="metadata"></video>';
       } else if (it.kind === "text") {
         media = '<div class="tt">' + (it.memo ? esc(it.memo) : '<span class="ttempty">（空のメモ）</span>') + "</div>";
+      } else if (it.kind === "file") {
+        media = fileTile(it, true);
       } else {
         media = '<div class="wave2">';
         for (var k = 0; k < 24; k++) {
@@ -3095,7 +3194,9 @@
         }
         media += '</div><audio src="' + src + '" controls preload="metadata"></audio>';
       }
-      var cls = it.kind === "text" ? " textonly" : (it.kind === "audio" ? " audioonly" : "");
+      var cls = it.kind === "text" ? " textonly"
+              : it.kind === "file" ? " fileonly"
+              : (it.kind === "audio" ? " audioonly" : "");
       out.push('<div class="fslide"><div class="slidemedia' + cls + '">' + media + "</div></div>");
     });
     out.push("</div>");
