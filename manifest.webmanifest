@@ -9,7 +9,7 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
-  "background_color": "#A9DDC8",
+  "background_color": "#171817",
   "theme_color": "#A9DDC8",
   "categories": ["productivity", "photo"],
   "icons": [
