@@ -583,9 +583,46 @@
     });
 
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", function () {
-        navigator.serviceWorker.register("sw.js").catch(function () {});
+      /* 新しい版が実際に受け持ちを引き継いだ瞬間。ここが一番確かな合図 */
+      var hadSW = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener("controllerchange", function () {
+        if (hadSW) updateBar();
+        hadSW = true;
       });
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("sw.js").then(function (reg) {
+          /* 新しい版が届いたら、黙って入れ替えず、こちらから声をかける。
+             書きかけの画面が急に消えないように */
+          reg.addEventListener("updatefound", function () {
+            var w = reg.installing;
+            if (!w) return;
+            w.addEventListener("statechange", function () {
+              if (w.state === "installed" && navigator.serviceWorker.controller) updateBar();
+            });
+          });
+          /* 起動のたびと、開きっぱなしのときは1時間ごとに、新しい版がないか見る */
+          try { reg.update(); } catch (e) {}
+          setInterval(function () { try { reg.update(); } catch (e) {} }, 60 * 60 * 1000);
+        }).catch(function () {});
+      });
+    }
+
+    /* 「新しい版があります」の帯。押したときだけ切り替える */
+    function updateBar() {
+      if ($("updbar")) return;
+      var d = document.createElement("div");
+      d.className = "upd on";
+      d.id = "updbar";
+      d.innerHTML = '<span>新しい版が届いています</span>'
+        + '<button id="updGo">切り替える</button>'
+        + '<button class="updx" id="updNo" aria-label="あとで">あとで</button>';
+      document.body.appendChild(d);
+      /* 下のバーと広告のぶんだけ持ち上げる。高さは端末や広告の有無で変わる */
+      var dock = document.querySelector(".dock");
+      var h = dock ? Math.round(dock.getBoundingClientRect().height) : 92;
+      d.style.bottom = (h + 12) + "px";
+      $("updGo").onclick = function () { location.reload(); };
+      $("updNo").onclick = function () { d.remove(); };
     }
     window.addEventListener("beforeinstallprompt", function (e) {
       e.preventDefault(); deferredInstall = e;
@@ -1299,7 +1336,7 @@
       + '<li><span class="k">01</span><div><b>フォルダをつくる</b>'
       + "<span>ひとつの案件・旅行・会議につき、ひとつ。テンプレートを選ぶと、名前とメモの形が最初から入ります。</span></div></li>"
       + '<li><span class="k">02</span><div><b>放り込む</b>'
-      + '<span>下の <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・メモ。枚数の上限はありません。</span></div></li>'
+      + '<span>下の <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・書類・メモ。数の上限はありません。</span></div></li>'
       + '<li><span class="k">03</span><div><b>カテゴリで絞り込む</b>'
       + "<span>「仕事」「旅」などの名前を付けておくと、この画面の上でそれを押したとき、そのフォルダだけが並びます。</span></div></li>"
       + '<li><span class="k">04</span><div><b>タグで拾う</b>'

@@ -4,7 +4,7 @@
  * 電波がなくても起動できるようにする。
  * 写真やメモは IndexedDB 側にあるので、ここでは扱わない。
  */
-var CACHE = "expo-note-v17";
+var CACHE = "expo-note-v18";
 var SHELL = [
   "./",
   "./index.html",
@@ -21,7 +21,10 @@ self.addEventListener("install", function (e) {
   e.waitUntil(
     caches.open(CACHE).then(function (c) {
       return Promise.all(SHELL.map(function (u) {
-        return c.add(u).catch(function () { /* 1つ失敗しても導入は続ける */ });
+        /* 新しい版を入れるときは、必ずサーバーから取り直す。
+           ブラウザの手持ちを使うと、古いままが貯まり直ってしまう */
+        return c.add(new Request(u, { cache: "reload" }))
+          .catch(function () { return c.add(u).catch(function () { /* 1つ失敗しても導入は続ける */ }); });
       }));
     }).then(function () { return self.skipWaiting(); })
   );
