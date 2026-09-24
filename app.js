@@ -3814,7 +3814,7 @@
       + '<div class="hintline">画像は長辺1400pxに縮めて、この端末の中に持ちます</div></div>';
 
     sheet('<div class="panel-head"><h3>見た目を整える</h3>'
-      + '<button class="iconbtn" id="lkClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<button class="iconbtn ok" id="lkClose" aria-label="完了"><svg><use href="#i-check"/></svg></button></div>'
       + '<div class="panel-body">'
       + '<div class="preview">'
       + '<div class="pvname">2026AW 合同展示会</div>'
