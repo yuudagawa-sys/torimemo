@@ -1,4 +1,4 @@
-/* とりメモ — ホーム画面アプリ版
+/* Rawpo（ローポ）— ホーム画面アプリ版
  *
  * 写真・録音・録画・メモはすべて端末の中（IndexedDB）に入ります。
  * サーバーには何も送りません。通信が無くても動きます。
@@ -861,7 +861,7 @@
       el.innerHTML = '<img src="' + SKIN.banner + '" alt="">';
     } else {
       el.className = "banner";
-      el.innerHTML = '<span class="bmark">とりメモ</span>';
+      el.innerHTML = '<span class="bmark">Rawpo</span>';
     }
   }
 
@@ -935,7 +935,7 @@
     if (screen === "shelf") {
       document.documentElement.setAttribute("data-screen", "shelf");
       pick.className = "exbtn still";
-      pick.setAttribute("aria-label", "とりメモ");
+      pick.setAttribute("aria-label", "Rawpo");
       t.textContent = "";
       if (cb) cb.innerHTML = "";
       if (exs.length) {
@@ -3387,13 +3387,13 @@
       + '<button class="iconbtn" id="xClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
       + '<button class="rowbtn" id="xZip"><div><b>写真とメモ（ZIP）</b>'
-      + "<span>写真・動画・録音・書類をまとめて、メモも同梱。相手がとりメモを使っていなくても開けます。</span></div>"
+      + "<span>写真・動画・録音・書類をまとめて、メモも同梱。相手がRawpoを使っていなくても開けます。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="xMd"><div><b>メモだけ（Markdown）</b>'
       + "<span>撮った順に並べた文章。原稿を書くときはこれ。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
-      + '<button class="rowbtn" id="xPack"><div><b>まるごと（とりメモに読み込める形）</b>'
-      + "<span>別の端末のとりメモで「バックアップから戻す」を使うと、このフォルダがそのまま入ります。</span></div>"
+      + '<button class="rowbtn" id="xPack"><div><b>まるごと（Rawpoに読み込める形）</b>'
+      + "<span>別の端末のRawpoで「バックアップから戻す」を使うと、このフォルダがそのまま入ります。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + "</div>"
       + '<div class="hintline" style="margin-top:10px">どれを選んでも、最後に端末の共有シートが開きます。'
@@ -3583,7 +3583,7 @@
 
   function backup() {
     makeBackup(null, null).then(function (zip) {
-      return handOver(zip, "v1_とりメモ_バックアップ_" + today() + ".zip").then(function (how) {
+      return handOver(zip, "Rawpo_バックアップ_" + today() + ".zip").then(function (how) {
         progress(100);
         if (how !== "cancel") toast("バックアップを書き出しました（" + mb(zip.size) + "）");
       });

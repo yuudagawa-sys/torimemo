@@ -1,10 +1,10 @@
-/* とりメモ — オフライン用のサービスワーカー
+/* Rawpo — オフライン用のサービスワーカー
  *
  * アプリの本体（HTML/CSS/JS/アイコン）を端末に貯めておき、
  * 電波がなくても起動できるようにする。
  * 写真やメモは IndexedDB 側にあるので、ここでは扱わない。
  */
-var CACHE = "expo-note-v21";
+var CACHE = "expo-note-v22";
 var SHELL = [
   "./",
   "./index.html",
