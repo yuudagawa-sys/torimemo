@@ -4,7 +4,7 @@
  * 電波がなくても起動できるようにする。
  * 写真やメモは IndexedDB 側にあるので、ここでは扱わない。
  */
-var CACHE = "expo-note-v18";
+var CACHE = "expo-note-v19";
 var SHELL = [
   "./",
   "./index.html",
