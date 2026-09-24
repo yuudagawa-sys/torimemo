@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>とりメモ</title>
+<meta name="description" content="写真・音声・動画をひとまとめに残す、現場のためのメモアプリ。データは端末の中だけに保存されます。">
+
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#A9DDC8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E1916" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="とりメモ">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png" sizes="192x192">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-cam" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2L8 5h8l1.5 2h2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.4"/>
+  </symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>
+  </symbol>
+  <symbol id="i-vid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="6" width="12.5" height="12" rx="2"/><path d="M15.5 10.5 21 7.5v9l-5.5-3z"/>
+  </symbol>
+  <symbol id="i-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 6h14M5 12h14M5 18h9"/>
+  </symbol>
+  <symbol id="i-star" viewBox="0 0 24 24" fill="currentColor">
+    <path d="m12 3.6 2.5 5.3 5.7.8-4.1 4 1 5.7-5.1-2.8-5.1 2.8 1-5.7-4.1-4 5.7-.8z"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <path d="m6 6 12 12M18 6 6 18"/>
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <path d="M12 5v14M5 12h14"/>
+  </symbol>
+  <symbol id="i-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3v12M8 11l4 4 4-4M4 17v3h16v-3"/>
+  </symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M10.3 2.6h3.4l.42 2.35a7.4 7.4 0 0 1 1.62.94l2.24-.83 1.7 2.94-1.82 1.52a7.5 7.5 0 0 1 0 1.88l1.82 1.52-1.7 2.94-2.24-.83a7.4 7.4 0 0 1-1.62.94l-.42 2.35h-3.4l-.42-2.35a7.4 7.4 0 0 1-1.62-.94l-2.24.83-1.7-2.94 1.82-1.52a7.5 7.5 0 0 1 0-1.88L4.32 8l1.7-2.94 2.24.83a7.4 7.4 0 0 1 1.62-.94z"/>
+    <circle cx="12" cy="12" r="2.9"/>
+  </symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="currentColor">
+    <rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/>
+    <rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>
+  </symbol>
+  <symbol id="i-feed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <rect x="4" y="4" width="16" height="10" rx="1.5"/><path d="M6 17.5h12M6 20.5h8"/>
+  </symbol>
+  <symbol id="i-flip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 10a8 8 0 0 0-13.6-4.3L4 8M4 14a8 8 0 0 0 13.6 4.3L20 16"/><path d="M4 4v4h4M20 20v-4h-4"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m5 12.5 4.5 4.5L19 7"/>
+  </symbol>
+  <symbol id="i-paint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.1 0-.9.8-1.7 1.7-1.7h1.6A4.9 4.9 0 0 0 21 10.4C21 6.3 16.9 3 12 3z"/>
+    <circle cx="7.5" cy="11" r="1.1" fill="currentColor"/><circle cx="11" cy="7.5" r="1.1" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.1" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12.5V4.5A1.5 1.5 0 0 1 4.5 3h8l8.5 8.5-9 9z"/><circle cx="7.6" cy="7.6" r="1.4"/>
+  </symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor">
+    <circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>
+  </symbol>
+  <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.5v11"/><path d="M8.5 7 12 3.5 15.5 7"/>
+    <path d="M6 12H5a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 5 20h14a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 19 12h-1"/>
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <path d="M4 7h16M4 12h16M4 17h10"/>
+  </symbol>
+  <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 10.6 12 4l8 6.6"/><path d="M6 10v9.5h12V10"/>
+  </symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.2h8.5A1.5 1.5 0 0 1 21 9.7v8.8A1.5 1.5 0 0 1 19.5 20h-15A1.5 1.5 0 0 1 3 18.5z"/>
+  </symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 5.5 15.5 12 9 18.5"/>
+  </symbol>
+  <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/>
+  </symbol>
+</svg>
+<header class="top">
+  <div class="banner" id="banner"></div>
+  <div class="top-in">
+    <div class="excat" id="exCat"></div>
+    <div class="exline">
+      <button class="exbtn still" id="exPick" aria-label="とりメモ">
+        <span class="exname" id="exTitle">とりメモ</span>
+        <svg class="exchev"><use href="#i-chev"/></svg>
+      </button>
+    </div>
+    <div class="exmeta" id="exMeta"></div>
+  </div>
+  <div class="rail" id="rail"></div>
+  <div class="seek">
+    <div class="seekfield">
+      <svg><use href="#i-search"/></svg>
+      <input id="q" type="search" placeholder="すべてのフォルダから探す" autocomplete="off">
+    </div>
+    <div class="viewtoggle">
+      <button id="vGrid" aria-pressed="true" title="一覧" aria-label="一覧で見る"><svg><use href="#i-grid"/></svg></button>
+      <button id="vFeed" aria-pressed="false" title="大きく" aria-label="1件ずつ大きく見る"><svg><use href="#i-feed"/></svg></button>
+    </div>
+    <button class="sortbtn favbtn" id="btnFav" aria-pressed="false" title="★を付けたものだけ" aria-label="★を付けたものだけ">★</button>
+    <button class="sortbtn" id="btnSort">古い順</button>
+  </div>
+</header>
+
+<main>
+  <div id="stage"></div>
+</main>
+
+<div class="dock">
+  <nav class="tabbar" id="tabbar" aria-label="メニュー">
+    <button data-nav="home" aria-current="true"><svg><use href="#i-home"/></svg><span>ホーム</span></button>
+    <button data-nav="tags"><svg><use href="#i-tag"/></svg><span>タグ</span></button>
+    <button data-nav="more"><svg><use href="#i-gear"/></svg><span>設定</span></button>
+    <button class="addtab" id="btnAdd" data-nav="add"><svg><use href="#i-plus"/></svg><span id="addLabel">新しいフォルダ</span></button>
+  </nav>
+  <div class="adslot" id="adSlot" hidden></div>
+  <input id="fileIn" type="file" accept="image/*" multiple hidden>
+  <input id="videoIn" type="file" accept="video/*" multiple hidden>
+  <input id="audioIn" type="file" accept="audio/*" multiple hidden>
+  <input id="skinIn" type="file" accept="image/*" hidden>
+</div>
+
+<div class="scrim" id="scrim"><div class="panel" id="panel"></div></div>
+<div class="mini" id="mini"><div class="minibox" id="minibox"></div></div>
+<div class="rec" id="rec"></div>
+<div class="cam" id="cam"></div>
+<div class="toast" id="toast"></div>
+<div class="bar" id="bar"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

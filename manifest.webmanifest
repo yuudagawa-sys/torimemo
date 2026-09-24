@@ -1,0 +1,20 @@
+{
+  "name": "とりメモ",
+  "short_name": "とりメモ",
+  "description": "写真・音声・動画をひとまとめに残す、現場のためのメモアプリ。データは端末の中だけに保存されます。",
+  "lang": "ja",
+  "dir": "ltr",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#A9DDC8",
+  "theme_color": "#A9DDC8",
+  "categories": ["productivity", "photo"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
