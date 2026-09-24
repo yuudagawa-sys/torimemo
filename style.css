@@ -1353,8 +1353,9 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   padding:8px var(--pad) 0; min-height:26px;
 }
 .banner .bmark{
-  font-family:var(--ui); font-weight:700; font-size:11.5px;
-  letter-spacing:.22em; text-indent:.22em; color:var(--ink3);
+  /* ヘルベチカは字面が広いので、字間を空けずに組む */
+  font-family:var(--ui); font-weight:700; font-size:12.5px;
+  letter-spacing:-.005em; color:var(--ink3);
 }
 .banner.has{
   display:block; padding:0; min-height:0;
