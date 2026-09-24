@@ -2558,7 +2558,7 @@
         + "<h3>" + pad2(pos) + " ／ " + kindJa + "</h3>"
         + '<div style="display:flex;gap:8px">'
         + '<button class="iconbtn" id="mFav" title="お気に入り" aria-pressed="' + (!!it.fav) + '" style="color:' + (it.fav ? "var(--mark)" : "var(--ink3)") + '"><svg><use href="#i-star"/></svg></button>'
-        + '<button class="iconbtn" id="mClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div></div>'
+        + '<button class="iconbtn ok" id="mClose" aria-label="完了"><svg><use href="#i-check"/></svg></button></div></div>'
         + '<div class="panel-body">'
         + media
         + '<div class="field"><label class="label" for="mMemo">メモ</label>'
@@ -2580,7 +2580,13 @@
         + (it.blobId ? '<button class="ghost" id="mDl">この' + kindJa + "を共有</button>" : "<span></span>")
         + "</div>");
 
-      $("mClose").onclick = closeSheet;
+      $("mClose").onclick = function () {
+        /* 700ミリ秒の自動保存を待たずに、いま書いてあるものを残してから閉じる */
+        clearTimeout(saveTimer);
+        var t = $("mMemo");
+        if (t && t.value !== (it.memo || "")) save({ memo: t.value });
+        closeSheet();
+      };
 
       /* 左右スワイプで隣の1件へ */
       function step(d) {

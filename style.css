@@ -117,6 +117,10 @@ button{cursor:pointer;background:none;border:0;padding:0}
   display:grid; place-items:center;
 }
 .iconbtn:hover{color:var(--ink); border-color:var(--ink3)}
+/* 「これでよし」と分かるボタン。閉じるではなく、済ませる */
+.iconbtn.ok{background:var(--ink); border-color:var(--ink); color:var(--paper)}
+.iconbtn.ok:hover{color:var(--paper); border-color:var(--ink)}
+.iconbtn.ok svg{width:19px;height:19px}
 .iconbtn.ghosty{border-color:transparent; background:none; color:var(--ink3); width:34px; height:34px}
 .iconbtn.ghosty:hover{color:var(--ink); background:var(--sunk)}
 .iconbtn svg{width:17px;height:17px;display:block}
