@@ -372,6 +372,55 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .toast.on{opacity:1}
 .toast.bad{background:var(--rec); color:#fff}
 
+/* ---------- 時刻と場所のまとまり ---------- */
+.clumps{display:grid; gap:6px; margin:4px 0 2px}
+.clump{
+  display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+  border:1px solid var(--line2); border-radius:var(--r);
+  background:var(--card); padding:8px 11px;
+}
+.clump b{font-size:13px; color:var(--ink); font-weight:700}
+.clump span{font-family:var(--mono); font-size:11px; color:var(--ink3); white-space:nowrap}
+
+/* ---------- 選んでまとめて操作する ---------- */
+.frame.picking{cursor:pointer}
+.frame.picking::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  border:2px solid transparent; border-radius:inherit;
+}
+.frame.picking[aria-pressed="true"]::after{border-color:var(--ink)}
+.frame .tick{
+  position:absolute; left:7px; top:7px; z-index:3;
+  width:22px; height:22px; border-radius:50%;
+  display:grid; place-items:center;
+  font-size:12px; line-height:1; font-weight:700;
+  background:rgba(255,255,255,.82); color:var(--ink);
+  border:1px solid rgba(0,0,0,.12);
+}
+.frame[aria-pressed="true"] .tick{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+
+.pickbar{
+  position:fixed; left:50%; transform:translateX(-50%); z-index:93;
+  display:flex; align-items:center; gap:6px;
+  background:var(--ink); color:var(--paper);
+  padding:7px 8px 7px 14px; border-radius:999px;
+  box-shadow:var(--shadow); max-width:calc(100vw - 16px);
+  overflow-x:auto; scrollbar-width:none;
+}
+.pickbar::-webkit-scrollbar{display:none}
+.pickbar .pn{
+  font-family:var(--mono); font-size:12px; letter-spacing:.04em;
+  flex:0 0 auto; font-variant-numeric:tabular-nums;
+}
+.pickbar button{
+  flex:0 0 auto; background:var(--paper); color:var(--ink);
+  border-radius:999px; padding:6px 12px; font-size:12.5px; font-weight:700;
+  white-space:nowrap;
+}
+.pickbar button:disabled{opacity:.35}
+.pickbar button.bad{background:var(--rec); color:#fff}
+.pickbar button.off{background:none; color:var(--paper); opacity:.75; font-weight:400; padding:6px 8px}
+
 /* ---------- 写真の大きさの選択 ---------- */
 .sizepick{display:grid; gap:6px; margin:2px 0 4px}
 .sizepick button{

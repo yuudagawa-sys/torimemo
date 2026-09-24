@@ -377,6 +377,11 @@
   var shelfView = "sq";   /* 棚の並べ方。"sq"（正方形）が既定。"list" で行になる */
   var curEx = null, curTag = "all", favOnly = false, query = "", viewMode = "grid";
   /* 並び順は3つ。古い順＝撮った順 */
+  /* 選んでまとめて操作するとき。長押しで入る */
+  var picking = false, picked = {};
+  function pickedIds() { return Object.keys(picked).filter(function (k) { return picked[k]; }); }
+  function pickCount() { return pickedIds().length; }
+
   var SORTS = [
     { k: "new", t: "新しい順" },
     { k: "old", t: "古い順" },
@@ -1317,14 +1322,129 @@
           pips += '<span class="pip"><svg><use href="#i-mic"/></svg></span>';
         }
         var tg = (it.tags || [])[0] || "";
-        html += '<button class="frame" data-open="' + esc(it.id) + '">'
+        var on = !!picked[it.id];
+        html += '<button class="frame' + (picking ? " picking" : "") + '" data-open="' + esc(it.id) + '"'
+          + (picking ? ' aria-pressed="' + on + '"' : "") + ">"
           + body
           + (tg ? '<span class="brandstrip">#' + esc(tg) + "</span>" : "")
-          + '<span class="pips">' + pips + "</span></button>";
+          + '<span class="pips">' + pips + "</span>"
+          + (picking ? '<span class="tick">' + (on ? "✓" : "") + "</span>" : "")
+          + "</button>";
       });
       html += "</div>";
       stage.innerHTML = html;
+      wireItemHold(stage);
+      pickBar();
     });
+  }
+
+  /* 写真を長押しすると、選ぶ状態に入る。iPhoneのホーム画面と同じ感覚 */
+  function wireItemHold(box) {
+    if (box._itemwired) return;
+    box._itemwired = true;
+    var timer = null, sx = 0, sy = 0, held = false, id = null;
+
+    box.addEventListener("pointerdown", function (e) {
+      var f = e.target.closest("[data-open]");
+      if (!f) return;
+      id = f.getAttribute("data-open");
+      sx = e.clientX; sy = e.clientY; held = false;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        held = true;
+        if (!picking) { picking = true; picked = {}; }
+        picked[id] = true;
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
+        paintStage();
+      }, 450);
+    });
+    box.addEventListener("pointermove", function (e) {
+      if (Math.abs(e.clientX - sx) > 9 || Math.abs(e.clientY - sy) > 9) clearTimeout(timer);
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
+      box.addEventListener(k, function () { clearTimeout(timer); });
+    });
+    /* 長押しのあとに続くクリックは飲み込む */
+    box.addEventListener("click", function (e) {
+      if (!held) return;
+      held = false;
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+    box.addEventListener("contextmenu", function (e) {
+      if (e.target.closest("[data-open]")) e.preventDefault();
+    });
+  }
+
+  /* 選んでいる間、下に出る帯 */
+  function pickBar() {
+    var bar = $("pickbar");
+    if (!picking) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "pickbar";
+      bar.id = "pickbar";
+      document.body.appendChild(bar);
+    }
+    var n = pickCount();
+    bar.innerHTML = '<span class="pn">' + n + " 件</span>"
+      + '<button data-pk="all">すべて</button>'
+      + '<button data-pk="share"' + (n ? "" : " disabled") + ">共有</button>"
+      + '<button data-pk="tag"' + (n ? "" : " disabled") + ">タグ</button>"
+      + '<button data-pk="del" class="bad"' + (n ? "" : " disabled") + ">削除</button>"
+      + '<button data-pk="off" class="off">やめる</button>';
+    var dock = document.querySelector(".dock");
+    bar.style.bottom = ((dock ? Math.round(dock.getBoundingClientRect().height) : 92) + 10) + "px";
+    Array.prototype.forEach.call(bar.querySelectorAll("[data-pk]"), function (b) {
+      b.onclick = function () { pickAct(b.getAttribute("data-pk")); };
+    });
+  }
+
+  function pickOff() {
+    picking = false; picked = {};
+    var bar = $("pickbar");
+    if (bar) bar.remove();
+    paintStage();
+  }
+
+  function pickAct(k) {
+    var ids = pickedIds();
+    var list = items.filter(function (it) { return picked[it.id]; });
+    if (k === "off") { pickOff(); return; }
+    if (k === "all") {
+      var vis = visible();
+      var everyone = vis.every(function (it) { return picked[it.id]; });
+      picked = {};
+      if (!everyone) vis.forEach(function (it) { picked[it.id] = true; });
+      paintStage();
+      return;
+    }
+    if (!ids.length) return;
+    if (k === "share") {
+      var ex = exById(curEx);
+      if (ex) exportSheet(ex, list, true);
+      return;
+    }
+    if (k === "tag") { tagPrompt(ids); return; }
+    if (k === "del") {
+      askYesNo({
+        title: ids.length + " 件を削除",
+        body: "選んだものを消します。取り消せません。",
+        ok: "削除する"
+      }, function () {
+        var kill = [];
+        list.forEach(function (it) {
+          kill.push(["items", it.id]);
+          if (it.blobId) kill.push(["blobs", it.blobId]);
+          if (it.thumbId && it.thumbId !== it.blobId) kill.push(["blobs", it.thumbId]);
+        });
+        DB.delMany(kill).then(function () {
+          items = items.filter(function (it) { return !picked[it.id]; });
+          if (browseAll) browseAll = browseAll.filter(function (it) { return !picked[it.id]; });
+          toast(ids.length + " 件を削除しました");
+          pickOff(); gauge();
+        }).catch(function (e) { toast(why(e), true); });
+      });
+    }
   }
 
   function welcome() {
@@ -1382,7 +1502,16 @@
       return;
     }
     var o = ev.target.closest("[data-open]");
-    if (o) { openItem(o.getAttribute("data-open")); return; }
+    if (o) {
+      var oid = o.getAttribute("data-open");
+      if (picking) {
+        if (picked[oid]) delete picked[oid]; else picked[oid] = true;
+        paintStage();
+        return;
+      }
+      openItem(oid);
+      return;
+    }
     if (ev.target.id === "goNewEx") { newExDialog(); return; }
   });
 
@@ -1396,6 +1525,7 @@
 
   /* 棚へ戻る。フォルダが並んでいるところ */
   function goShelf() {
+    picking = false; picked = {};
     screen = "shelf";
     clearSearch(); shelfTag = "";
     dropUrls(); items = [];
@@ -1406,6 +1536,7 @@
   /* フォルダを開く。中の写真・録音・メモが並ぶ */
   function openFolder(id) {
     if (!id) return Promise.resolve();
+    picking = false; picked = {};
     screen = "folder";
     curEx = id; remember("ex", curEx);
     curTag = "all"; clearSearch();
@@ -1660,7 +1791,8 @@
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
     if ($("mini").className.indexOf("on") >= 0) { miniClose(); return; }
-    if ($("scrim").className.indexOf("on") >= 0) closeSheet();
+    if ($("scrim").className.indexOf("on") >= 0) { closeSheet(); return; }
+    if (picking) pickOff();
   });
 
   function askText(o, done) {
@@ -2349,6 +2481,140 @@
   }
 
   /* ============================================================
+     EXIF（撮影時刻と位置）
+     ============================================================
+     JPEGの先頭にある小さな覚え書きを読むだけ。
+     ファイル全体ではなく、頭の128KBしか触らないので速い。
+     AIは使っていない。時刻と位置は事実なので、間違えようがない */
+  function exifOf(file) {
+    return new Promise(function (res) {
+      if (!file || !/jpe?g/i.test(file.type || file.name || "")) { res(null); return; }
+      var head = file.slice(0, 131072);
+      var fr = new FileReader();
+      fr.onerror = function () { res(null); };
+      fr.onload = function () {
+        try { res(readExif(new DataView(fr.result))); }
+        catch (e) { res(null); }
+      };
+      fr.readAsArrayBuffer(head);
+    });
+  }
+
+  function readExif(v) {
+    if (v.byteLength < 8 || v.getUint16(0) !== 0xFFD8) return null;
+    var p = 2;
+    while (p + 4 < v.byteLength) {
+      if (v.getUint8(p) !== 0xFF) break;
+      var mark = v.getUint8(p + 1), len = v.getUint16(p + 2);
+      if (mark === 0xE1) {
+        if (v.getUint32(p + 4) !== 0x45786966) break;   /* "Exif" */
+        return readTiff(v, p + 10);
+      }
+      if (mark === 0xDA) break;                          /* 画像本体に入った */
+      p += 2 + len;
+    }
+    return null;
+  }
+
+  function readTiff(v, t) {
+    var le = v.getUint16(t) === 0x4949;                  /* バイトの並び */
+    var u16 = function (o) { return v.getUint16(o, le); };
+    var u32 = function (o) { return v.getUint32(o, le); };
+    if (u16(t + 2) !== 42) return null;
+
+    var out = { when: null, lat: null, lon: null };
+    var ifd0 = t + u32(t + 4);
+    var exifOff = 0, gpsOff = 0;
+
+    function walk(dir, onTag) {
+      if (dir + 2 > v.byteLength) return;
+      var n = u16(dir);
+      for (var i = 0; i < n; i++) {
+        var e = dir + 2 + i * 12;
+        if (e + 12 > v.byteLength) return;
+        onTag(u16(e), u16(e + 2), u32(e + 4), e + 8);
+      }
+    }
+    function str(count, valOff, raw) {
+      var off = count > 4 ? t + u32(raw) : raw;
+      var sOut = "";
+      for (var i = 0; i < count && off + i < v.byteLength; i++) {
+        var c = v.getUint8(off + i);
+        if (!c) break;
+        sOut += String.fromCharCode(c);
+      }
+      return sOut;
+    }
+    function rat3(raw) {
+      var off = t + u32(raw), a = [];
+      for (var i = 0; i < 3; i++) {
+        var d = u32(off + i * 8), q = u32(off + i * 8 + 4);
+        a.push(q ? d / q : 0);
+      }
+      return a[0] + a[1] / 60 + a[2] / 3600;
+    }
+
+    walk(ifd0, function (tag, type, count, raw) {
+      if (tag === 0x8769) exifOff = t + u32(raw);
+      else if (tag === 0x8825) gpsOff = t + u32(raw);
+      else if (tag === 0x0132 && !out.when) out.when = str(count, raw, raw);
+    });
+    if (exifOff) walk(exifOff, function (tag, type, count, raw) {
+      if (tag === 0x9003 || tag === 0x9004) out.when = str(count, raw, raw) || out.when;
+    });
+    if (gpsOff) {
+      var ns = "N", ew = "E";
+      walk(gpsOff, function (tag, type, count, raw) {
+        if (tag === 0x0001) ns = str(2, raw, raw);
+        else if (tag === 0x0002) out.lat = rat3(raw);
+        else if (tag === 0x0003) ew = str(2, raw, raw);
+        else if (tag === 0x0004) out.lon = rat3(raw);
+      });
+      if (out.lat != null && ns === "S") out.lat = -out.lat;
+      if (out.lon != null && ew === "W") out.lon = -out.lon;
+    }
+
+    /* "2026:09:24 14:10:33" の形で入っている */
+    if (out.when) {
+      var m = out.when.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+      out.when = m
+        ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime()
+        : null;
+    }
+    if (!out.when && out.lat == null) return null;
+    return out;
+  }
+
+  /* 2点の距離をメートルで。地球を丸い球として扱う程度で十分 */
+  function metersBetween(a, b) {
+    if (a.lat == null || b.lat == null) return 0;
+    var R = 6371000, r = Math.PI / 180;
+    var dla = (b.lat - a.lat) * r, dlo = (b.lon - a.lon) * r;
+    var h = Math.sin(dla / 2) * Math.sin(dla / 2)
+      + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dlo / 2) * Math.sin(dlo / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  /* 時刻と場所でひとかたまりにする。
+     2時間以上あいたら別、500m以上離れたら別 */
+  var GAP_MS = 2 * 60 * 60 * 1000, GAP_M = 500;
+  function clump(rows) {
+    var withWhen = rows.filter(function (r) { return r.ex && r.ex.when; });
+    if (withWhen.length < 2) return null;
+    withWhen.sort(function (a, b) { return a.ex.when - b.ex.when; });
+    var groups = [], cur = [withWhen[0]];
+    for (var i = 1; i < withWhen.length; i++) {
+      var prev = withWhen[i - 1].ex, now = withWhen[i].ex;
+      var far = (now.lat != null && prev.lat != null) && metersBetween(prev, now) > GAP_M;
+      if (now.when - prev.when > GAP_MS || far) { groups.push(cur); cur = []; }
+      cur.push(withWhen[i]);
+    }
+    groups.push(cur);
+    var loose = rows.filter(function (r) { return !(r.ex && r.ex.when); });
+    return { groups: groups, loose: loose };
+  }
+
+  /* ============================================================
      写真の大きさ
      ============================================================
      元のファイルは持たず、必ず縮めてから保存する。
@@ -2397,8 +2663,110 @@
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
     /* 毎回きく設定なら、先に大きさを選ばせてから取り込む */
-    if (asksSize()) { sizeAsk(list.length, function (sp) { runPhotos(list, sp); }); return; }
-    runPhotos(list, photoSize());
+    if (asksSize()) { sizeAsk(list.length, function (sp) { afterSize(list, sp); }); return; }
+    afterSize(list, photoSize());
+  }
+
+  /* 大きさが決まったら、撮った時刻と場所でかたまりを探す。
+     2つ以上に分かれたときだけ、分けるか聞く */
+  function afterSize(list, spec) {
+    if (list.length < 3 || recall("nosplit") === "1") { runPhotos(list, spec); return; }
+    toast("撮った時刻を見ています…");
+    var jobs = list.map(function (f) {
+      return exifOf(f).then(function (ex) { return { file: f, ex: ex }; });
+    });
+    Promise.all(jobs).then(function (rows) {
+      var c = clump(rows);
+      if (!c || c.groups.length < 2) { runPhotos(list, spec); return; }
+      splitAsk(c, spec, list);
+    }, function () { runPhotos(list, spec); });
+  }
+
+  function whenLabel(g) {
+    var a = new Date(g[0].ex.when), b = new Date(g[g.length - 1].ex.when);
+    var d = (a.getMonth() + 1) + "/" + a.getDate();
+    var t1 = pad2(a.getHours()) + ":" + pad2(a.getMinutes());
+    var t2 = pad2(b.getHours()) + ":" + pad2(b.getMinutes());
+    return d + " " + t1 + (t1 === t2 ? "" : "〜" + t2);
+  }
+  function placeLabel(g) {
+    for (var i = 0; i < g.length; i++) if (g[i].ex.lat != null) {
+      return g[i].ex.lat.toFixed(3) + ", " + g[i].ex.lon.toFixed(3);
+    }
+    return "";
+  }
+
+  /* かたまりが見つかったとき。分けるか、1つにまとめるかを選ばせる */
+  function splitAsk(c, spec, all) {
+    var gs = c.groups;
+    $("minibox").innerHTML = "<h4>" + gs.length + " つのまとまりに分かれています</h4>"
+      + "<p>撮った時刻と場所で見ると、別の場面が混ざっているようです。分けて入れることもできます。</p>"
+      + '<div class="clumps">'
+      + gs.map(function (g, i) {
+          var pl = placeLabel(g);
+          return '<div class="clump"><b>' + esc(whenLabel(g)) + "</b>"
+            + "<span>" + g.length + " 枚" + (pl ? " ・ " + esc(pl) : "") + "</span></div>";
+        }).join("")
+      + (c.loose.length ? '<div class="clump"><b>時刻が分からないもの</b><span>' + c.loose.length + " 枚</span></div>" : "")
+      + "</div>"
+      + '<label class="sizeask"><input type="checkbox" id="spNo"> 次からきかない</label>'
+      + '<div class="minibtns"><button class="ghost" id="spOne">1つにまとめる</button>'
+      + '<button class="cta" id="spSplit">' + gs.length + " つに分ける</button></div>";
+    $("mini").className = "mini on";
+
+    function remember0() { if ($("spNo").checked) remember("nosplit", "1"); }
+    $("spOne").onclick = function () { remember0(); miniClose(); runPhotos(all, spec); };
+    $("spSplit").onclick = function () {
+      remember0(); miniClose();
+      splitInto(gs, c.loose, spec);
+    };
+  }
+
+  /* かたまりごとに新しいフォルダを作って、順に入れていく */
+  function splitInto(gs, loose, spec) {
+    var base = exById(curEx), made = 0;
+    var chain = Promise.resolve();
+    gs.forEach(function (g, i) {
+      chain = chain.then(function () {
+        var a = new Date(g[0].ex.when);
+        var nm = (base && base.name ? base.name : "写真") + "_" + (a.getMonth() + 1) + "-" + a.getDate()
+          + "_" + pad2(a.getHours()) + pad2(a.getMinutes());
+        var ex = {
+          id: uid(), name: dedupeName(nm), cat: (base && base.cat) || "",
+          date: a.getFullYear() + "-" + pad2(a.getMonth() + 1) + "-" + pad2(a.getDate()),
+          venue: "", note: "", form: (base && base.form) || "", createdAt: Date.now() + i
+        };
+        return DB.put("exhibitions", ex).then(function () {
+          exs.push(ex);
+          made++;
+          curEx = ex.id;
+          return new Promise(function (done) {
+            runPhotos(g.map(function (r) { return r.file; }), spec, done);
+          });
+        });
+      });
+    });
+    chain.then(function () {
+      if (loose && loose.length) {
+        curEx = base ? base.id : curEx;
+        return new Promise(function (done) {
+          runPhotos(loose.map(function (r) { return r.file; }), spec, done);
+        });
+      }
+    }).then(function () {
+      curEx = base ? base.id : curEx;
+      toast(made + " つのフォルダに分けました");
+      goShelf();
+    }).catch(function (e) { toast(why(e), true); });
+  }
+
+  /* 同じ名前が並ばないように、後ろに番号を足す */
+  function dedupeName(nm) {
+    var used = {};
+    exs.forEach(function (e) { used[(e.name || "").trim()] = 1; });
+    if (!used[nm]) return nm;
+    for (var i = 2; i < 99; i++) if (!used[nm + "_" + i]) return nm + "_" + i;
+    return nm + "_" + Date.now();
   }
 
   /* 取り込む前に1回だけきく。「毎回きかない」にすると次からは出ない */
@@ -2435,20 +2803,21 @@
     };
   }
 
-  function runPhotos(list, spec) {
+  /* then は、分けて入れるときに「1つ終わった」と伝えるための合図 */
+  function runPhotos(list, spec, then) {
     var exAt = curEx;
     var tAt = (curTag !== "all" && curTag !== "none") ? [curTag] : [];
-    var done = 0, failed = 0, lastErr = "", added = [];
+    var ok = 0, failed = 0, lastErr = "", added = [];
     progress(2);
     toast(list.length + " 枚を取り込んでいます…");
 
     var chain = Promise.resolve();
     list.forEach(function (f, n) {
       chain = chain.then(function () {
-        return savePhoto(f, exAt, tAt, n, spec).then(function (rec) { done++; if (rec) added.push(rec.id); }, function (e) {
+        return savePhoto(f, exAt, tAt, n, spec).then(function (rec) { ok++; if (rec) added.push(rec.id); }, function (e) {
           failed++; lastErr = why(e);
         }).then(function () {
-          progress(Math.round(((done + failed) / list.length) * 100));
+          progress(Math.round(((ok + failed) / list.length) * 100));
         });
       });
     });
@@ -2457,8 +2826,9 @@
       progress(100);
       items.sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
       paint(); gauge();
-      if (failed && !done) toast(failed + " 枚とも失敗：" + lastErr, true);
-      else if (failed) toast(done + " 枚を追加（" + failed + " 枚失敗：" + lastErr + "）", true);
+      if (then) { if (failed) toast(failed + " 枚は入りませんでした。" + lastErr, true); then(); return; }
+      if (failed && !ok) toast(failed + " 枚とも失敗：" + lastErr, true);
+      else if (failed) toast(ok + " 枚を追加（" + failed + " 枚失敗：" + lastErr + "）", true);
       else tagPrompt(added);
     });
   }
@@ -2485,6 +2855,14 @@
       + "</div>"
       + '<div class="hintline">アプリ内カメラで撮るときは、いつも上の大きさを使います。'
       + "撮るたびに手が止まらないように、こちらではききません。</div></div>"
+      + '<div class="field"><div class="label">時刻と場所で分ける</div>'
+      + '<div class="segs" id="szSplit">'
+      + '<button data-sp="1" aria-pressed="' + (recall("nosplit") !== "1") + '">まとまりが分かれていたらきく</button>'
+      + '<button data-sp="0" aria-pressed="' + (recall("nosplit") === "1") + '">きかない</button>'
+      + "</div>"
+      + '<div class="hintline">写真に残っている撮影時刻と位置を見て、'
+      + "2時間以上あいているか500m以上離れていたら、別の場面として分けるかきいてきます。"
+      + "写真の中身は見ていません。</div></div>"
       + "</div>", "dialog");
 
     $("szClose").onclick = closeSheet;
@@ -2495,6 +2873,14 @@
           o.setAttribute("aria-pressed", o === b);
         });
         toast(photoSize().name + "（長辺" + photoSize().edge + "px）にしました");
+      };
+    });
+    Array.prototype.forEach.call($("szSplit").querySelectorAll("[data-sp]"), function (b) {
+      b.onclick = function () {
+        remember("nosplit", b.getAttribute("data-sp") === "1" ? "0" : "1");
+        Array.prototype.forEach.call($("szSplit").querySelectorAll("[data-sp]"), function (o) {
+          o.setAttribute("aria-pressed", o === b);
+        });
       };
     });
     Array.prototype.forEach.call($("szAsk").querySelectorAll("[data-ask]"), function (b) {
@@ -2994,9 +3380,10 @@
     }).catch(function (e) { toast(why(e), true); });
   }
 
-  function exportSheet(ex, src) {
+  function exportSheet(ex, src, partial) {
 
-    sheet('<div class="panel-head"><h3>このフォルダを共有する</h3>'
+    sheet('<div class="panel-head"><h3>'
+      + (partial ? "選んだ " + src.length + " 件を共有する" : "このフォルダを共有する") + "</h3>"
       + '<button class="iconbtn" id="xClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
       + '<button class="rowbtn" id="xZip"><div><b>写真とメモ（ZIP）</b>'
@@ -3009,7 +3396,9 @@
       + "<span>別の端末のとりメモで「バックアップから戻す」を使うと、このフォルダがそのまま入ります。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + "</div>"
-      + '<div class="hintline" style="margin-top:10px">iPhoneでは共有シートが開きます。AirDrop・LINE・メール・ファイルアプリへそのまま送れます</div>'
+      + '<div class="hintline" style="margin-top:10px">どれを選んでも、最後に端末の共有シートが開きます。'
+      + "<b>メール</b>を選べば、添付された状態で新しいメールが立ち上がります。"
+      + "AirDrop・LINE・ファイルアプリも同じところから選べます。</div>"
       + "</div>", "dialog");
 
     $("xClose").onclick = closeSheet;
