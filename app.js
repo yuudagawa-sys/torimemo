@@ -2348,9 +2348,29 @@
     });
   }
 
+  /* ============================================================
+     写真の大きさ
+     ============================================================
+     元のファイルは持たず、必ず縮めてから保存する。
+     iPhoneの写真は 4032×3024・3〜5MB あるので、そのまま溜めると端末が持たない */
+  var SIZES = [
+    { k: "full",  name: "そのまま",     edge: 2048, q: 0.86, note: "長辺2048px。細かいところまで残る" },
+    { k: "mid",   name: "軽め",         edge: 1600, q: 0.82, note: "長辺1600px。見るぶんには十分" },
+    { k: "small", name: "もっと軽め",   edge: 1280, q: 0.78, note: "長辺1280px。枚数が多い日に" }
+  ];
+  function sizeSpec(k) {
+    for (var i = 0; i < SIZES.length; i++) if (SIZES[i].k === k) return SIZES[i];
+    return SIZES[0];
+  }
+  /* 既定の大きさ。アプリ内カメラはこれをそのまま使い、いちいち聞かない */
+  function photoSize() { return sizeSpec(recall("psize") || "full"); }
+  /* 取り込むとき、毎回きくかどうか */
+  function asksSize() { return recall("pask") !== "0"; }
+
   /* 1枚を大小2つのJPEGにして保存する。取り込みとアプリ内カメラで共用 */
-  function savePhoto(src, exAt, tAt, nudge) {
-    return Promise.all([shrink(src, 2048, 0.86), shrink(src, 400, 0.72)]).then(function (r) {
+  function savePhoto(src, exAt, tAt, nudge, spec) {
+    var sp = spec || photoSize();
+    return Promise.all([shrink(src, sp.edge, sp.q), shrink(src, 400, 0.72)]).then(function (r) {
       var full = r[0], thumb = r[1];
       var bid = uid(), tid = uid();
       var rec = {
@@ -2376,6 +2396,46 @@
     if (!curEx) { toast("先に" + LL() + "をつくってください。", true); newExDialog(); return; }
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
+    /* 毎回きく設定なら、先に大きさを選ばせてから取り込む */
+    if (asksSize()) { sizeAsk(list.length, function (sp) { runPhotos(list, sp); }); return; }
+    runPhotos(list, photoSize());
+  }
+
+  /* 取り込む前に1回だけきく。「毎回きかない」にすると次からは出ない */
+  function sizeAsk(count, go) {
+    var cur = photoSize().k;
+    $("minibox").innerHTML = "<h4>" + count + " 枚の大きさ</h4>"
+      + "<p>元のままだと端末の空きをそのぶん使います。あとから変えられません。</p>"
+      + '<div class="sizepick" id="szPick">'
+      + SIZES.map(function (x) {
+          return '<button data-sz="' + x.k + '" aria-pressed="' + (x.k === cur) + '">'
+            + "<b>" + esc(x.name) + "</b><span>" + esc(x.note) + "</span></button>";
+        }).join("")
+      + "</div>"
+      + '<label class="sizeask"><input type="checkbox" id="szNo"> 次からきかない（設定でいつでも戻せます）</label>'
+      + '<div class="minibtns"><button class="ghost" id="szCancel">やめる</button>'
+      + '<button class="cta" id="szGo">取り込む</button></div>';
+    $("mini").className = "mini on";
+
+    var pick = cur;
+    Array.prototype.forEach.call($("szPick").querySelectorAll("[data-sz]"), function (b) {
+      b.onclick = function () {
+        pick = b.getAttribute("data-sz");
+        Array.prototype.forEach.call($("szPick").querySelectorAll("[data-sz]"), function (o) {
+          o.setAttribute("aria-pressed", o === b);
+        });
+      };
+    });
+    $("szCancel").onclick = miniClose;
+    $("szGo").onclick = function () {
+      remember("psize", pick);
+      if ($("szNo").checked) remember("pask", "0");
+      miniClose();
+      go(sizeSpec(pick));
+    };
+  }
+
+  function runPhotos(list, spec) {
     var exAt = curEx;
     var tAt = (curTag !== "all" && curTag !== "none") ? [curTag] : [];
     var done = 0, failed = 0, lastErr = "", added = [];
@@ -2385,7 +2445,7 @@
     var chain = Promise.resolve();
     list.forEach(function (f, n) {
       chain = chain.then(function () {
-        return savePhoto(f, exAt, tAt, n).then(function (rec) { done++; if (rec) added.push(rec.id); }, function (e) {
+        return savePhoto(f, exAt, tAt, n, spec).then(function (rec) { done++; if (rec) added.push(rec.id); }, function (e) {
           failed++; lastErr = why(e);
         }).then(function () {
           progress(Math.round(((done + failed) / list.length) * 100));
@@ -2400,6 +2460,50 @@
       if (failed && !done) toast(failed + " 枚とも失敗：" + lastErr, true);
       else if (failed) toast(done + " 枚を追加（" + failed + " 枚失敗：" + lastErr + "）", true);
       else tagPrompt(added);
+    });
+  }
+
+  /* 写真の大きさの設定。アプリ内カメラはここで選んだものを黙って使う */
+  function sizeSheet() {
+    var cur = photoSize().k;
+    sheet('<div class="panel-head"><h3>写真の大きさ</h3>'
+      + '<button class="iconbtn ok" id="szClose" aria-label="完了"><svg><use href="#i-check"/></svg></button></div>'
+      + '<div class="panel-body">'
+      + '<div class="field"><div class="label">大きさ</div>'
+      + '<div class="sizepick" id="szPick2">'
+      + SIZES.map(function (x) {
+          return '<button data-sz="' + x.k + '" aria-pressed="' + (x.k === cur) + '">'
+            + "<b>" + esc(x.name) + "</b><span>" + esc(x.note) + "</span></button>";
+        }).join("")
+      + "</div>"
+      + '<div class="hintline">元の写真は残しません。ここで選んだ大きさに縮めてから入ります。'
+      + "あとから大きくは戻せません。</div></div>"
+      + '<div class="field"><div class="label">取り込むとき</div>'
+      + '<div class="segs" id="szAsk">'
+      + '<button data-ask="1" aria-pressed="' + asksSize() + '">毎回きく</button>'
+      + '<button data-ask="0" aria-pressed="' + (!asksSize()) + '">きかない</button>'
+      + "</div>"
+      + '<div class="hintline">アプリ内カメラで撮るときは、いつも上の大きさを使います。'
+      + "撮るたびに手が止まらないように、こちらではききません。</div></div>"
+      + "</div>", "dialog");
+
+    $("szClose").onclick = closeSheet;
+    Array.prototype.forEach.call($("szPick2").querySelectorAll("[data-sz]"), function (b) {
+      b.onclick = function () {
+        remember("psize", b.getAttribute("data-sz"));
+        Array.prototype.forEach.call($("szPick2").querySelectorAll("[data-sz]"), function (o) {
+          o.setAttribute("aria-pressed", o === b);
+        });
+        toast(photoSize().name + "（長辺" + photoSize().edge + "px）にしました");
+      };
+    });
+    Array.prototype.forEach.call($("szAsk").querySelectorAll("[data-ask]"), function (b) {
+      b.onclick = function () {
+        remember("pask", b.getAttribute("data-ask"));
+        Array.prototype.forEach.call($("szAsk").querySelectorAll("[data-ask]"), function (o) {
+          o.setAttribute("aria-pressed", o === b);
+        });
+      };
     });
   }
 
@@ -2991,6 +3095,9 @@
       + (screen === "folder" ? '<button class="rowbtn" id="sEdit"><div><b>このフォルダの設定</b><span>名前・カテゴリ・日付・場所・フォーマット・削除</span></div><svg><use href="#i-book"/></svg></button>' : "")
       + '<button class="rowbtn" id="sTags"><div><b>タグを見る・整理する</b>'
       + "<span>付けたタグの一覧。名前の付け替えと削除もここで</span></div><svg><use href=\"#i-tag\"/></svg></button>"
+      + '<button class="rowbtn" id="sSize"><div><b>写真の大きさ</b>'
+      + "<span>" + esc(photoSize().name) + "・長辺" + photoSize().edge + "px"
+      + (asksSize() ? "。取り込むたびにきく" : "。取り込むときはきかない") + "</span></div><svg><use href=\"#i-cam\"/></svg></button>"
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
       + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
@@ -3041,6 +3148,7 @@
                       : "ブラウザのメニュー →「アプリをインストール」を選んでください");
       }
     };
+    $("sSize").onclick = function () { closeSheet(); sizeSheet(); };
     $("sBackup").onclick = backup;
     $("sRestore").onclick = function () { $("restoreIn").click(); };
     $("restoreIn").onchange = function () {
