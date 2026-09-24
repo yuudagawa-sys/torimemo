@@ -1608,8 +1608,13 @@
     var e = ex || { name: "", date: today(), venue: "", note: "", cat: "" };
     var tpl = tplChips(e.tpl || "");
 
+    /* 上に「やめて戻る」と「これでつくる」を並べる。下まで送らなくても決められる */
+    var okJa = ex ? "保存する" : "つくる";
     sheet('<div class="panel-head"><h3>' + (ex ? "この" + esc(LL(e)) + "の設定" : "新しく作る") + "</h3>"
-      + '<button class="iconbtn" id="dxClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div style="display:flex;gap:8px">'
+      + '<button class="iconbtn" id="dxClose" aria-label="やめて戻る" title="やめて戻る"><svg><use href="#i-back"/></svg></button>'
+      + '<button class="iconbtn ok" id="exSave" aria-label="' + okJa + '" title="' + okJa + '"><svg><use href="#i-check"/></svg></button>'
+      + '</div></div>'
       + '<div class="panel-body">'
       + '<div class="field"><div class="label">テンプレート</div>'
       + '<div class="chipset" id="tplRow">' + tpl + "</div>"
@@ -1634,9 +1639,7 @@
       + '<textarea class="ta" id="exNote" placeholder="">' + esc(e.note || "") + "</textarea>"
       + '<div class="hintline">フォルダ全体についての覚え書きです</div></div>'
       + "</div>"
-      + '<div class="panel-foot">'
-      + (ex ? '<button class="danger" id="exDel">この展示会を削除</button>' : "<span></span>")
-      + '<button class="cta" id="exSave">' + (ex ? "保存する" : "つくる") + "</button></div>", "dialog");
+      + (ex ? '<div class="panel-foot"><button class="danger" id="exDel">この' + esc(LL(e)) + 'を削除</button></div>' : ""), "dialog");
 
     $("dxClose").onclick = closeSheet;
     var ff = $("exForm");
