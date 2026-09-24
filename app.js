@@ -856,11 +856,14 @@
   function paintBanner() {
     var el = $("banner");
     if (!el) return;
+    var col = recall("bannercol") || "";
     if (SKIN.banner) {
       el.className = "banner has";
+      el.style.background = "";
       el.innerHTML = '<img src="' + SKIN.banner + '" alt="">';
     } else {
       el.className = "banner";
+      el.style.background = col || "";
       el.innerHTML = '<span class="bmark">Rawpo</span>';
     }
   }
@@ -871,21 +874,135 @@
     skinSlot = slot;
     $("skinIn").click();
   }
+  /* 場所ごとの仕上がりの寸法。この比で切り取る */
+  var SKIN_SIZE = {
+    banner: { w: 1200, h: 400 },   /* 横長の帯 */
+    bg1:    { w: 1200, h: 800 },   /* 見出しのうしろ */
+    bg2:    { w: 900,  h: 1600 },  /* 画面ぜんたい。縦長 */
+    bg3:    { w: 1400, h: 320 }    /* 下のバー */
+  };
+
   function saveSkin(file) {
     if (!file || !skinSlot) return;
-    var slot = skinSlot;
-    var wide = slot === "banner" ? 1200 : 1400;
-    progress(10);
-    shrink(file, wide, 0.82).then(function (r) {
-      return DB.put("blobs", { id: "skin_" + slot, blob: r.blob });
-    }).then(function () {
+    cropSheet(file, skinSlot);
+  }
+
+  /* 入れる前に、位置と大きさを決める画面。
+     指でずらす、2本指かつまみで拡大。決めたらその見えたままを切り取って持つ */
+  function cropSheet(file, slot) {
+    var spec = SKIN_SIZE[slot] || SKIN_SIZE.bg2;
+    var url = URL.createObjectURL(file);
+
+    sheet('<div class="panel-head"><h3>位置と大きさ</h3>'
+      + '<div style="display:flex;gap:8px">'
+      + '<button class="iconbtn" id="cpNo" aria-label="やめる"><svg><use href="#i-back"/></svg></button>'
+      + '<button class="iconbtn ok" id="cpOk" aria-label="これで入れる"><svg><use href="#i-check"/></svg></button>'
+      + "</div></div>"
+      + '<div class="panel-body">'
+      + '<div class="cropbox" id="cpBox" style="aspect-ratio:' + spec.w + "/" + spec.h + '">'
+      + '<img id="cpImg" src="' + url + '" alt="" draggable="false">'
+      + "</div>"
+      + '<div class="field"><div class="label">大きさ</div>'
+      + '<input class="zoom" id="cpZoom" type="range" min="100" max="320" value="100" step="1">'
+      + '<div class="hintline">画像を指でずらすと位置が変わります。2本指でつまんでも大きさを変えられます。'
+      + "ここに見えているとおりに切り取って持ちます。</div></div>"
+      + '<div class="panel-foot"><button class="ghost" id="cpFit">はじめに戻す</button></div>'
+      + "</div>", "dialog");
+
+    var box = $("cpBox"), img = $("cpImg"), zoom = $("cpZoom");
+    var st = { s: 1, x: 0, y: 0 };      /* 拡大率と、中心からのずれ（割合） */
+    var nat = { w: 0, h: 0 };
+
+    function draw() {
+      /* cover で収まる大きさを1として、そこからの拡大率で置く */
+      img.style.transform = "translate(-50%, -50%) translate(" + st.x + "px, " + st.y + "px) scale(" + st.s + ")";
+    }
+    function clamp() {
+      var bw = box.clientWidth, bh = box.clientHeight;
+      var iw = img.clientWidth * st.s, ih = img.clientHeight * st.s;
+      var mx = Math.max(0, (iw - bw) / 2), my = Math.max(0, (ih - bh) / 2);
+      st.x = Math.max(-mx, Math.min(mx, st.x));
+      st.y = Math.max(-my, Math.min(my, st.y));
+    }
+    img.onload = function () {
+      nat.w = img.naturalWidth; nat.h = img.naturalHeight;
+      st = { s: 1, x: 0, y: 0 };
+      zoom.value = 100;
+      draw();
+    };
+
+    zoom.oninput = function () {
+      st.s = parseInt(this.value, 10) / 100;
+      clamp(); draw();
+    };
+    $("cpFit").onclick = function () {
+      st = { s: 1, x: 0, y: 0 }; zoom.value = 100; draw();
+    };
+
+    /* 指で動かす。2本なら、つまんだ幅で大きさも変える */
+    var pts = {}, base = null;
+    box.addEventListener("pointerdown", function (e) {
+      box.setPointerCapture(e.pointerId);
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      base = null;
+    });
+    box.addEventListener("pointermove", function (e) {
+      if (!pts[e.pointerId]) return;
+      var ids = Object.keys(pts);
+      if (ids.length === 1) {
+        st.x += e.clientX - pts[e.pointerId].x;
+        st.y += e.clientY - pts[e.pointerId].y;
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        clamp(); draw();
+      } else if (ids.length >= 2) {
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        var a = pts[ids[0]], b = pts[ids[1]];
+        var d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (base == null) { base = { d: d, s: st.s }; return; }
+        st.s = Math.max(1, Math.min(3.2, base.s * (d / base.d)));
+        zoom.value = Math.round(st.s * 100);
+        clamp(); draw();
+      }
+    });
+    ["pointerup", "pointercancel"].forEach(function (k) {
+      box.addEventListener(k, function (e) { delete pts[e.pointerId]; base = null; });
+    });
+
+    $("cpNo").onclick = function () {
+      try { URL.revokeObjectURL(url); } catch (e) {}
+      closeSheet(); lookDialog();
+    };
+    $("cpOk").onclick = function () {
+      var bw = box.clientWidth, bh = box.clientHeight;
+      var dw = img.clientWidth * st.s, dh = img.clientHeight * st.s;   /* 画面上での見た目の大きさ */
+      var k = spec.w / bw;                                             /* 画面 → 仕上がりの倍率 */
+      var c = document.createElement("canvas");
+      c.width = spec.w; c.height = spec.h;
+      var g = c.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(img,
+        (bw / 2 + st.x - dw / 2) * k,
+        (bh / 2 + st.y - dh / 2) * k,
+        dw * k, dh * k);
+      c.toBlob(function (blob) {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        if (!blob) { toast("画像を作れませんでした。", true); return; }
+        putSkin(slot, blob);
+      }, "image/jpeg", 0.85);
+    };
+  }
+
+  function putSkin(slot, blob) {
+    progress(20);
+    DB.put("blobs", { id: "skin_" + slot, blob: blob }).then(function () {
       return DB.get("blobs", "skin_" + slot);
     }).then(function (r) {
       try { if (SKIN[slot]) URL.revokeObjectURL(SKIN[slot]); } catch (e) {}
       SKIN[slot] = r && r.blob ? URL.createObjectURL(r.blob) : "";
-      if (slot !== "banner") remember(slot + "col", "");
+      remember(slot + "col", "");
       progress(100);
       applySkin();
+      closeSheet();
       toast("入れました");
       lookDialog();
     }).catch(function (e) { progress(100); toast(why(e), true); });
@@ -894,7 +1011,7 @@
     DB.del("blobs", "skin_" + slot).catch(function () {}).then(function () {
       try { if (SKIN[slot]) URL.revokeObjectURL(SKIN[slot]); } catch (e) {}
       SKIN[slot] = "";
-      if (slot !== "banner") remember(slot + "col", "");
+      remember(slot + "col", "");
       applySkin();
       lookDialog();
     });
@@ -3794,24 +3911,25 @@
     });
 
     var AREAS = [
-      { k: "banner", name: "上のバナー", note: "画像だけ。横長がきれいに出ます" },
+      { k: "banner", name: "上のバナー", note: "いちばん上の帯。横長がきれいに出ます" },
       { k: "bg1",    name: "上のエリア", note: "見出し・タブ・検索窓のうしろ" },
       { k: "bg2",    name: "中のエリア", note: "フォルダや写真が並ぶところ" },
       { k: "bg3",    name: "下のエリア", note: "ホーム・タグ・設定のバー" }
     ];
     var skinBody = '<div class="field"><div class="label">バナーと背景</div>'
       + '<div class="skins">' + AREAS.map(function (a) {
-        var has = !!SKIN[a.k], col = a.k === "banner" ? "" : (recall(a.k + "col") || "");
+        var has = !!SKIN[a.k], col = recall(a.k + "col") || "";
         return '<div class="skinrow"><div class="skinname">' + esc(a.name)
           + "<span>" + esc(a.note) + "</span></div>"
           + '<div class="skinbtns">'
-          + (a.k === "banner" ? "" : '<button class="ghost colbtn" data-col="' + a.k + '"'
+          + ('<button class="ghost colbtn" data-col="' + a.k + '"'
               + (col ? ' style="border-color:' + esc(col) + ';background:' + esc(col) + '"' : "") + ">色</button>")
           + '<button class="ghost" data-pick="' + a.k + '">画像</button>'
           + ((has || col) ? '<button class="ghost" data-clear="' + a.k + '">戻す</button>' : "")
           + "</div></div>";
       }).join("") + "</div>"
-      + '<div class="hintline">画像は長辺1400pxに縮めて、この端末の中に持ちます</div></div>';
+      + '<div class="hintline">画像を選ぶと、位置と大きさを決める画面になります。'
+      + "決めたぶんだけを切り取って、この端末の中に持ちます。</div></div>";
 
     sheet('<div class="panel-head"><h3>見た目を整える</h3>'
       + '<button class="iconbtn ok" id="lkClose" aria-label="完了"><svg><use href="#i-check"/></svg></button></div>'
