@@ -460,7 +460,7 @@
   var LOOK = [
     { key: "theme",   attr: "data-theme",   def: "auto" },
     { key: "palette", attr: "data-palette", def: "mint" },
-    { key: "face",    attr: "data-face",    def: "mincho" },
+    { key: "face",    attr: "data-face",    def: "gothic" },
     { key: "radius",  attr: "data-radius",  def: "normal" },
     { key: "density", attr: "data-density", def: "normal" },
     { key: "cols",    attr: "data-cols",    def: "3" }
@@ -3767,7 +3767,7 @@
   function lookDialog() {
     var GROUPS = [
       { key: "theme",   name: "明るさ",       opts: [["auto", "端末に合わせる"], ["light", "明るい"], ["dark", "暗い"]] },
-      { key: "face",    name: "見出しの書体", opts: [["mincho", "明朝"], ["gothic", "ゴシック"]] },
+      { key: "face",    name: "書体",         opts: [["gothic", "Helvetica"], ["din", "DIN風"], ["mincho", "明朝見出し"]] },
       { key: "density", name: "余白",         opts: [["tight", "詰める"], ["normal", "標準"], ["airy", "ゆったり"]] },
       { key: "radius",  name: "角の丸み",     opts: [["sharp", "角ばる"], ["normal", "標準"], ["soft", "丸い"]] },
       { key: "cols",    name: "一覧の列数",   opts: [["2", "2列"], ["3", "3列"], ["4", "4列"]] }
