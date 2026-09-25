@@ -1895,14 +1895,21 @@
     $("scrim").className = "scrim on" + (cls ? " " + cls : "");
     document.body.style.overflow = "hidden";
   }
+  /* 入力欄に触れたままシートを消すと、キーボードが引っ込むときに
+     画面が半端な位置で止まることがある。先に指を離させてから閉じる */
+  function dropFocus() {
+    var a = document.activeElement;
+    if (a && a !== document.body && a.blur) { try { a.blur(); } catch (e) {} }
+  }
   function closeSheet() {
+    dropFocus();
     $("scrim").className = "scrim";
     $("panel").innerHTML = "";
     document.body.style.overflow = "";
   }
   $("scrim").onclick = function (e) { if (e.target === this) closeSheet(); };
 
-  function miniClose() { $("mini").className = "mini"; $("minibox").innerHTML = ""; }
+  function miniClose() { dropFocus(); $("mini").className = "mini"; $("minibox").innerHTML = ""; }
   $("mini").onclick = function (e) { if (e.target === this) miniClose(); };
 
   document.addEventListener("keydown", function (e) {

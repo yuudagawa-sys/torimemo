@@ -75,6 +75,10 @@ body{
   -webkit-text-size-adjust:100%;
   padding-bottom:calc(130px + env(safe-area-inset-bottom));
   overflow-x:hidden;
+  /* 素早く二回叩いたときの拡大をやめる。写真をめくったり札を選んだりで
+     二回叩きになりやすく、そのたび画面が寄ってしまう。
+     指を広げる拡大はそのまま使える */
+  touch-action:manipulation;
 }
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;background:none;border:0;padding:0}
@@ -163,7 +167,8 @@ button{cursor:pointer;background:none;border:0;padding:0}
 }
 .seekfield:focus-within{border-color:var(--mark); background:var(--card)}
 .seekfield svg{width:17px;height:17px;color:var(--ink3);flex:0 0 auto}
-.seekfield input{flex:1; background:none; border:0; padding:11px 0; font-size:14.5px; min-width:0}
+/* 探す欄も同じ理由で 16px */
+.seekfield input{flex:1; background:none; border:0; padding:10px 0; font-size:16px; min-width:0}
 .seekfield input:focus{outline:none}
 .sortbtn{
   flex:0 0 auto; font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10.5px; letter-spacing:.04em;
@@ -309,7 +314,11 @@ main{padding:0 var(--pad) 28px}
 .label .asis{text-transform:none; letter-spacing:.04em}
 .inp, .ta, .sel{
   width:100%; background:var(--card); border:1px solid var(--line2);
-  border-radius:var(--r); padding:9px 11px; font-size:14.5px;
+  border-radius:var(--r); padding:8px 11px;
+  /* iPhone は、字が 16px より小さい欄に触れると勝手に画面を拡大する。
+     拡大は戻してくれないので、そもそも起こさないよう 16px で組む。
+     指で広げる拡大は残したいので、画面の設定では止めない */
+  font-size:16px;
 }
 .ta{min-height:104px; resize:vertical; line-height:1.7}
 .inp:focus, .ta:focus, .sel:focus{outline:none; border-color:var(--mark)}
