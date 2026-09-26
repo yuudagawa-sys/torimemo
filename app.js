@@ -298,6 +298,195 @@
   }
 
   /* ============================================================
+     置き場所（チームで使うための土台）
+     ------------------------------------------------------------
+     フォルダを何人かで使うには、間に立つ置き場所が要る。
+     いまはGoogleドライブに置いているが、あとで自前のサーバーに
+     替えたくなったときのために、外とのやりとりはぜんぶ
+     この Shelf を通す。画面側は下の決まった呼び出ししか
+     使わないので、中身を入れ替えても画面は直さなくていい。
+
+       Shelf.linked()    つないであるか
+       Shelf.link()      つなぐ（相手に許可画面が出る）
+       Shelf.unlink()    つなぎを切る
+       Shelf.who()       つないだ人の名前
+       Shelf.newRoom()   共有フォルダを1つ作る
+       Shelf.put()       1件置く
+       Shelf.get()       1件取る
+       Shelf.list()      中に何があるか
+       Shelf.drop()      1件消す
+       Shelf.invite()    招くためのリンクを作る
+     ============================================================ */
+
+  /* Googleに登録したRawpoの名札。公開されている前提の値なので、
+     ここに書いてあって問題ない。対になる「シークレット」は使わない */
+  var G_ID = "1016605740338-ilj0tn76ll6q23gepb7aer4ndi4h4d2i.apps.googleusercontent.com";
+
+  /* 「このアプリが作ったファイルだけ触れる」いちばん狭い権限。
+     これより広げると相手のドライブ全部が見えてしまううえ、
+     Googleの有料の審査も要るようになる */
+  var G_SCOPE = "https://www.googleapis.com/auth/drive.file";
+
+  /* 合鍵は画面を閉じれば消える。端末に書き残さない。
+     残しておくと、端末を借りた人がそのまま使えてしまう */
+  var gTok = null, gTokUntil = 0, gClient = null, gName = "";
+
+  function gScript() {
+    if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+    return new Promise(function (ok, ng) {
+      var s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true;
+      s.onload = function () { ok(); };
+      s.onerror = function () { ng(new Error("Googleにつながりませんでした。通信を確かめてください。")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  /* quiet を true にすると、許可画面を出さずに合鍵だけ取り直す。
+     一度つないだ人が、次に開いたときに何も押さずに済むように */
+  function gKey(quiet) {
+    if (gTok && Date.now() < gTokUntil) return Promise.resolve(gTok);
+    return gScript().then(function () {
+      return new Promise(function (ok, ng) {
+        if (!gClient) {
+          gClient = google.accounts.oauth2.initTokenClient({
+            client_id: G_ID, scope: G_SCOPE, callback: function () {}
+          });
+        }
+        gClient.callback = function (res) {
+          if (!res || res.error) {
+            /* 黙って取り直そうとして断られただけなら、まだ手はある */
+            return ng(new Error(quiet ? "quiet" : "許可が下りませんでした。"));
+          }
+          gTok = res.access_token;
+          gTokUntil = Date.now() + ((res.expires_in || 3600) - 60) * 1000;
+          ok(gTok);
+        };
+        try {
+          gClient.requestAccessToken({ prompt: quiet ? "" : "consent" });
+        } catch (e) { ng(e); }
+      });
+    });
+  }
+
+  /* Googleへの問い合わせ。合鍵を添えて、返事が変なら日本語にして投げ直す */
+  function gCall(url, opt) {
+    opt = opt || {};
+    return gKey(true).catch(function () { return gKey(false); }).then(function (t) {
+      var h = opt.headers || {};
+      h.Authorization = "Bearer " + t;
+      opt.headers = h;
+      return fetch(url, opt);
+    }).then(function (r) {
+      if (r.status === 401 || r.status === 403) {
+        gTok = null;
+        throw new Error("Googleとのつなぎが切れました。もう一度つないでください。");
+      }
+      if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
+      return r.status === 204 ? null : r.json();
+    });
+  }
+
+  var DRIVE = "https://www.googleapis.com/drive/v3/files";
+  var DRIVE_UP = "https://www.googleapis.com/upload/drive/v3/files";
+
+  var Shelf = {
+    name: "drive",
+
+    linked: function () { return recall("linked") === "1"; },
+    who: function () { return gName; },
+
+    link: function () {
+      return gKey(false).then(function () {
+        remember("linked", "1");
+        /* 名前が取れなくても、つながってさえいれば用は足りる */
+        return gCall("https://www.googleapis.com/drive/v3/about?fields=user")
+          .then(function (a) {
+            gName = (a && a.user && (a.user.emailAddress || a.user.displayName)) || "";
+            return gName;
+          }).catch(function () { return ""; });
+      });
+    },
+
+    unlink: function () {
+      var t = gTok;
+      gTok = null; gTokUntil = 0; gName = "";
+      remember("linked", "");
+      /* Google側でも合鍵を無効にしておく。切ったつもりが
+         生きている、という状態を残さない */
+      if (t && window.google && google.accounts && google.accounts.oauth2) {
+        try { google.accounts.oauth2.revoke(t, function () {}); } catch (e) {}
+      }
+      return Promise.resolve();
+    },
+
+    /* 共有フォルダを1つ作る。返ってくるのはその部屋の番号 */
+    newRoom: function (name) {
+      return gCall(DRIVE + "?fields=id", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Rawpo_" + name,
+          mimeType: "application/vnd.google-apps.folder"
+        })
+      }).then(function (r) { return r.id; });
+    },
+
+    /* 1件置く。写真もメモも、1件＝1ファイルにする。
+       別々のファイルなら、2人が同時に足してもぶつからない */
+    put: function (roomId, name, blob) {
+      var meta = { name: name, parents: [roomId] };
+      var fd = new FormData();
+      fd.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
+      fd.append("file", blob);
+      return gCall(DRIVE_UP + "?uploadType=multipart&fields=id,modifiedTime", {
+        method: "POST", body: fd
+      });
+    },
+
+    get: function (fileId) {
+      return gKey(true).catch(function () { return gKey(false); }).then(function (t) {
+        return fetch(DRIVE + "/" + fileId + "?alt=media",
+                     { headers: { Authorization: "Bearer " + t } });
+      }).then(function (r) {
+        if (!r.ok) throw new Error("取り出せませんでした（" + r.status + "）。");
+        return r.blob();
+      });
+    },
+
+    list: function (roomId) {
+      var q = encodeURIComponent("'" + roomId + "' in parents and trashed=false");
+      var f = encodeURIComponent("files(id,name,size,modifiedTime,lastModifyingUser/displayName)");
+      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=1000")
+        .then(function (r) {
+          return (r.files || []).map(function (x) {
+            return {
+              fileId: x.id, name: x.name, size: Number(x.size || 0),
+              at: Date.parse(x.modifiedTime || 0) || 0,
+              by: (x.lastModifyingUser && x.lastModifyingUser.displayName) || ""
+            };
+          });
+        });
+    },
+
+    drop: function (fileId) {
+      return gCall(DRIVE + "/" + fileId, { method: "DELETE" });
+    },
+
+    /* 招くためのリンク。リンクを知っている人が書き込める状態にする */
+    invite: function (roomId) {
+      return gCall(DRIVE + "/" + roomId + "/permissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "writer", type: "anyone" })
+      }).then(function () {
+        return location.origin + location.pathname + "#join=" + roomId;
+      });
+    }
+  };
+
+  /* ============================================================
      テンプレートと配色
      ============================================================ */
   var DEF_L = "フォルダ";
@@ -3594,12 +3783,95 @@
     };
   }
 
+
+  /* ============================================================
+     チームで使う（つなぎの確認）
+     ------------------------------------------------------------
+     いまは「つながるかどうか」だけを見る画面。
+     ここが通らないと先へ進めないので、同期を組む前に
+     実機で確かめられるようにしてある。
+     ============================================================ */
+  function teamSheet() {
+    function paintTeam() {
+      var on = Shelf.linked();
+      var body = on
+        ? '<div class="pvrow"><b>つながっています</b><span class="saveflag">'
+            + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
+          + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
+          + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
+          + '<svg><use href="#i-share"/></svg></button>'
+          + '<button class="danger" id="tmOff">つなぎを切る</button>'
+        : '<button class="rowbtn" id="tmOn"><div><b>Googleドライブにつなぐ</b>'
+          + "<span>許可の画面が出ます。写真の置き場所として使います</span></div>"
+          + '<svg><use href="#i-plus"/></svg></button>';
+
+      sheet('<div class="panel-head"><h3>チームで使う</h3>'
+        + '<button class="iconbtn" id="tmClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+        + '<div class="panel-body"><div class="stack">'
+        + '<div class="hintline">フォルダを何人かで使うには、間に立つ置き場所が要ります。'
+        + "Rawpoは<b>あなた自身のGoogleドライブ</b>を使います。写真がRawpoのサーバーを通ることはありません。</div>"
+        + body
+        + '<div class="saveflag" id="tmSay"></div>'
+        + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
+        + "一緒に使いたい人が決まったら、その人のGmailを登録してください。</div>"
+        + "</div></div>"
+        + '<div class="panel-foot"><span class="label">つないでいないフォルダは、これまで通り端末の中だけにあります</span></div>', "dialog");
+
+      $("tmClose").onclick = closeSheet;
+      var say = function (t, bad) {
+        var e = $("tmSay");
+        if (e) { e.textContent = t; e.style.color = bad ? "var(--rec)" : ""; }
+      };
+
+      var on1 = $("tmOn");
+      if (on1) on1.onclick = function () {
+        say("Googleの画面を開いています…");
+        Shelf.link().then(function () {
+          toast("つながりました");
+          paintTeam();
+        }).catch(function (e) { say(why(e), true); });
+      };
+
+      var off = $("tmOff");
+      if (off) off.onclick = function () {
+        Shelf.unlink().then(function () { toast("つなぎを切りました"); paintTeam(); });
+      };
+
+      var t = $("tmTest");
+      if (t) t.onclick = function () {
+        say("試しています…");
+        var made = null;
+        Shelf.newRoom("つなぎの確認").then(function (id) {
+          made = id;
+          return Shelf.put(id, "test.txt", new Blob(["ok"], { type: "text/plain" }));
+        }).then(function () {
+          return Shelf.list(made);
+        }).then(function (rows) {
+          if (!rows.length) throw new Error("置いたはずのものが見つかりませんでした。");
+          return Shelf.drop(made);
+        }).then(function () {
+          say("やりとりできました。片付けも済んでいます");
+          toast("問題ありません");
+        }).catch(function (e) {
+          say(why(e), true);
+          if (made) Shelf.drop(made).catch(function () {});
+        });
+      };
+    }
+    paintTeam();
+
+    /* 名前がまだ取れていなければ、裏で取って書き足す */
+    if (Shelf.linked() && !Shelf.who()) {
+      Shelf.link().then(function () { if ($("tmSay")) paintTeam(); }).catch(function () {});
+    }
+  }
+
   /* ============================================================
      設定・バックアップ
      ============================================================ */
   function menuDialog() {
     sheet('<div class="panel-head">'
-      + '<h3><span style="color:var(--mark)">とり</span>メモ</h3>'
+      + '<h3><span style="color:var(--mark)">Raw</span>po</h3>'
       + '<button class="iconbtn" id="sClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
       + '<button class="rowbtn" id="sNew"><div><b>新しく作る</b>'
@@ -3612,6 +3884,9 @@
       + "<span>" + esc(photoSize().name) + "・長辺" + photoSize().edge + "px"
       + (asksSize() ? "。取り込むたびにきく" : "。取り込むときはきかない") + "</span></div><svg><use href=\"#i-cam\"/></svg></button>"
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
+      + '<button class="rowbtn" id="sTeam"><div><b>チームで使う</b>'
+      + "<span>" + (Shelf.linked() ? "Googleドライブにつないであります" : "フォルダを何人かで使うための準備") + "</span></div>"
+      + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
       + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
       + '<svg><use href="#i-star"/></svg></button>'
@@ -3648,6 +3923,7 @@
 
     $("sLook").onclick = lookDialog;
     $("sAd").onclick = function () { closeSheet(); removeAdsDialog(); };
+    $("sTeam").onclick = teamSheet;
     $("sTags").onclick = function () {
       tagSheet(screen === "folder" ? "folder" : "shelf");
     };
