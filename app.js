@@ -3795,7 +3795,7 @@
     function paintTeam() {
       var on = Shelf.linked();
       var body = on
-        ? '<div class="pvrow"><b>つながっています</b><span class="saveflag">'
+        ? '<div class="linked"><b>つながっています</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
