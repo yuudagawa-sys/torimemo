@@ -3465,7 +3465,13 @@
     ensureUrls([it.blobId]).then(function () {
       var src = urlCache[it.blobId] || "";
       var media;
-      if (it.kind === "photo") media = '<img class="shot" id="mShot" src="' + src + '" alt="">';
+      if (it.kind === "photo") {
+        media = '<img class="shot" id="mShot" src="' + src + '" alt="">'
+          + '<div class="fxrow" style="margin-top:6px">'
+          + '<button class="ghost" id="mFix">写真を直す</button>'
+          + (it.origId ? '<button class="ghost" id="mUnfix">元に戻す</button>' : "")
+          + "</div>";
+      }
       else if (it.kind === "video") media = '<video class="play" id="mShot" src="' + src + '" controls playsinline preload="metadata"></video>';
       else if (it.kind === "text") media = "";
       else if (it.kind === "file") media = fileTile(it, true) + '<button class="ghost" id="mOpen" style="justify-self:start">この書類を開く</button>';
@@ -3499,6 +3505,18 @@
         + '<button class="danger" id="mDel">削除</button>'
         + (it.blobId ? '<button class="ghost" id="mDl">この' + kindJa + "を共有</button>" : "<span></span>")
         + "</div>");
+
+      var fx = $("mFix");
+      if (fx) fx.onclick = function () {
+        clearTimeout(saveTimer);
+        var t = $("mMemo");
+        if (t && t.value !== (it.memo || "")) save({ memo: t.value });
+        fixSheet(it, function () { openItem(it.id); });
+      };
+      var ufx = $("mUnfix");
+      if (ufx) ufx.onclick = function () {
+        unfixItem(it, function () { openItem(it.id); });
+      };
 
       $("mClose").onclick = function () {
         /* 700ミリ秒の自動保存を待たずに、いま書いてあるものを残してから閉じる */
@@ -3641,6 +3659,293 @@
         }).catch(function (e) { toast(why(e), true); });
       };
     });
+  }
+
+
+  /* ============================================================
+     写真を直す（回転・切り抜き・明るさ）
+     ------------------------------------------------------------
+     見えているとおりに保存されることが何より大事なので、
+     下書きも仕上がりも render() ひとつで描く。大きさが違うだけ。
+     二重に計算を書くと、必ずどこかでずれる。
+
+     ずらし量（st.x / st.y）は画素ではなく「枠に対する割合」で持つ。
+     こうしておくと、小さい下書きで決めた位置が、そのまま
+     大きい仕上がりでも同じ場所になる。
+     ============================================================ */
+
+  /* 切り抜きの形。そのまま＝写真の形を変えない */
+  var CUTS = [
+    { k: "as", t: "そのまま", r: 0 },
+    { k: "sq", t: "1:1", r: 1 },
+    { k: "p45", t: "4:5", r: 4 / 5 },
+    { k: "l43", t: "4:3", r: 4 / 3 },
+    { k: "l169", t: "16:9", r: 16 / 9 }
+  ];
+
+  function fixSheet(it, after) {
+    if (!it || it.kind !== "photo" || !it.blobId) return;
+
+    var rot = 0, bri = 100, con = 100, cut = "as";
+    var st = { s: 1, x: 0, y: 0 };
+    var im = null, nat = { w: 0, h: 0 };
+
+    /* 回したあとの、元画像の向き */
+    function srcW() { return rot % 180 === 0 ? nat.w : nat.h; }
+    function srcH() { return rot % 180 === 0 ? nat.h : nat.w; }
+
+    function ratio() {
+      for (var i = 0; i < CUTS.length; i++) if (CUTS[i].k === cut) return CUTS[i].r;
+      return 0;
+    }
+    /* 仕上がりの縦横。そのままなら回したあとの形をそのまま使う */
+    function outSize() {
+      var r = ratio();
+      var edge = Math.min(photoSize().edge, Math.max(srcW(), srcH()));
+      if (!r) {
+        var k = edge / Math.max(srcW(), srcH());
+        return { w: Math.round(srcW() * k), h: Math.round(srcH() * k) };
+      }
+      /* 切り抜きで実際に使える画素はここまで。これを超えて大きくすると、
+         元にない細かさを水増しすることになるので、上限にする */
+      var sr = srcW() / srcH();
+      var aw = r >= sr ? srcW() : srcH() * r;
+      var ah = aw / r;
+      var long = Math.max(aw, ah);
+      var k = Math.min(photoSize().edge, long) / long;
+      return { w: Math.max(1, Math.round(aw * k)), h: Math.max(1, Math.round(ah * k)) };
+    }
+
+    function clampST(W, H) {
+      var cover = Math.max(W / srcW(), H / srcH()), s = cover * st.s;
+      var ow = srcW() * s, oh = srcH() * s;
+      var mx = Math.max(0, (ow - W) / 2) / W;
+      var my = Math.max(0, (oh - H) / 2) / H;
+      st.x = Math.max(-mx, Math.min(mx, st.x));
+      st.y = Math.max(-my, Math.min(my, st.y));
+    }
+
+    /* 下書きも仕上がりもこれ。明るさはここでは触らない */
+    function render(g, W, H) {
+      var cover = Math.max(W / srcW(), H / srcH()), s = cover * st.s;
+      g.clearRect(0, 0, W, H);
+      g.save();
+      g.imageSmoothingQuality = "high";
+      g.translate(W / 2 + st.x * W, H / 2 + st.y * H);
+      g.rotate(rot * Math.PI / 180);
+      g.drawImage(im, -nat.w * s / 2, -nat.h * s / 2, nat.w * s, nat.h * s);
+      g.restore();
+    }
+
+    /* 明るさとコントラスト。下書きはCSSに任せ、仕上がりだけ自前で計算する。
+       canvas の filter は古いiPhoneで効かないことがあるため */
+    function tone(g, W, H) {
+      if (bri === 100 && con === 100) return;
+      var d = g.getImageData(0, 0, W, H), a = d.data;
+      var b = bri / 100, c = con / 100;
+      var lut = new Uint8ClampedArray(256);
+      for (var v = 0; v < 256; v++) lut[v] = (v * b - 127.5) * c + 127.5;
+      for (var i = 0; i < a.length; i += 4) {
+        a[i] = lut[a[i]]; a[i + 1] = lut[a[i + 1]]; a[i + 2] = lut[a[i + 2]];
+      }
+      g.putImageData(d, 0, 0);
+    }
+
+    function cutRow() {
+      return CUTS.map(function (c) {
+        return '<button data-cut="' + c.k + '" aria-pressed="' + (c.k === cut) + '">'
+          + esc(c.t) + "</button>";
+      }).join("");
+    }
+
+    sheet('<div class="panel-head"><h3>写真を直す</h3>'
+      + '<div style="display:flex;gap:8px">'
+      + '<button class="iconbtn" id="fxNo" aria-label="やめる"><svg><use href="#i-back"/></svg></button>'
+      + '<button class="iconbtn ok" id="fxOk" aria-label="これで保存"><svg><use href="#i-check"/></svg></button>'
+      + "</div></div>"
+      + '<div class="panel-body">'
+      + '<div class="cropbox" id="fxBox"><canvas id="fxCv"></canvas></div>'
+      + '<div class="fxrow">'
+      + '<button class="ghost" id="fxL">↺ 左に90°</button>'
+      + '<button class="ghost" id="fxR">↻ 右に90°</button>'
+      + "</div>"
+      + '<div class="field"><div class="label">切り抜き</div>'
+      + '<div class="segs" id="fxCuts">' + cutRow() + "</div></div>"
+      + '<div class="field"><div class="label">大きさ</div>'
+      + '<input class="zoom" id="fxZoom" type="range" min="100" max="320" value="100" step="1"></div>'
+      + '<div class="field"><div class="label">明るさ</div>'
+      + '<input class="zoom" id="fxBri" type="range" min="50" max="160" value="100" step="1"></div>'
+      + '<div class="field"><div class="label">くっきり</div>'
+      + '<input class="zoom" id="fxCon" type="range" min="60" max="180" value="100" step="1"></div>'
+      + '<div class="hintline">指でずらすと位置が変わります。2本指でつまむと大きさも。'
+      + "ここに見えているとおりに保存されます。</div>"
+      + "</div>"
+      + '<div class="panel-foot"><button class="ghost" id="fxReset">はじめに戻す</button>'
+      + '<span class="saveflag" id="fxSay"></span></div>', "dialog");
+
+    var box = $("fxBox"), cv = $("fxCv");
+    function say(t, bad) {
+      var e = $("fxSay");
+      if (e) { e.textContent = t || ""; e.style.color = bad ? "var(--rec)" : ""; }
+    }
+
+    function paintFix() {
+      var out = outSize();
+      box.style.aspectRatio = out.w + "/" + out.h;
+      var W = box.clientWidth || 320;
+      var H = Math.round(W * out.h / out.w);
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      cv.style.width = W + "px"; cv.style.height = H + "px";
+      var g = cv.getContext("2d");
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      clampST(W, H);
+      render(g, W, H);
+      cv.style.filter = "brightness(" + bri + "%) contrast(" + con + "%)";
+      say(out.w + "×" + out.h);
+    }
+
+    DB.get("blobs", it.origId || it.blobId).then(function (r) {
+      if (!r || !r.blob) throw new Error("元の写真が見つかりませんでした。");
+      return decode(r.blob);
+    }).then(function (bmp) {
+      im = bmp.el || bmp;
+      nat = { w: im.width || im.naturalWidth, h: im.height || im.naturalHeight };
+      paintFix();
+    }).catch(function (e) { say(why(e), true); });
+
+    $("fxNo").onclick = function () { closeSheet(); if (after) after(); };
+    $("fxL").onclick = function () { rot = (rot + 270) % 360; st.x = 0; st.y = 0; paintFix(); };
+    $("fxR").onclick = function () { rot = (rot + 90) % 360; st.x = 0; st.y = 0; paintFix(); };
+    $("fxReset").onclick = function () {
+      rot = 0; bri = 100; con = 100; cut = "as"; st = { s: 1, x: 0, y: 0 };
+      $("fxZoom").value = 100; $("fxBri").value = 100; $("fxCon").value = 100;
+      $("fxCuts").innerHTML = cutRow(); wireCuts();
+      paintFix();
+    };
+    function wireCuts() {
+      Array.prototype.forEach.call($("fxCuts").querySelectorAll("[data-cut]"), function (b) {
+        b.onclick = function () {
+          cut = b.getAttribute("data-cut");
+          $("fxCuts").innerHTML = cutRow(); wireCuts();
+          paintFix();
+        };
+      });
+    }
+    wireCuts();
+    $("fxZoom").oninput = function () { st.s = parseInt(this.value, 10) / 100; paintFix(); };
+    $("fxBri").oninput = function () { bri = parseInt(this.value, 10); paintFix(); };
+    $("fxCon").oninput = function () { con = parseInt(this.value, 10); paintFix(); };
+
+    /* 指で動かす。切り抜きの枠に対する割合で覚える */
+    var pts = {}, base = null;
+    box.addEventListener("pointerdown", function (e) {
+      box.setPointerCapture(e.pointerId);
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY }; base = null;
+    });
+    box.addEventListener("pointermove", function (e) {
+      if (!pts[e.pointerId]) return;
+      var ids = Object.keys(pts);
+      var W = box.clientWidth || 1, H = box.clientHeight || 1;
+      if (ids.length === 1) {
+        st.x += (e.clientX - pts[e.pointerId].x) / W;
+        st.y += (e.clientY - pts[e.pointerId].y) / H;
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        paintFix();
+      } else if (ids.length >= 2) {
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        var a = pts[ids[0]], b = pts[ids[1]];
+        var d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (base == null) { base = { d: d, s: st.s }; return; }
+        st.s = Math.max(1, Math.min(3.2, base.s * (d / base.d)));
+        $("fxZoom").value = Math.round(st.s * 100);
+        paintFix();
+      }
+    });
+    ["pointerup", "pointercancel"].forEach(function (k) {
+      box.addEventListener(k, function (e) { delete pts[e.pointerId]; base = null; });
+    });
+
+    $("fxOk").onclick = function () {
+      if (!im) return;
+      say("書き出しています…");
+      var out = outSize();
+      function bake(W, H, q) {
+        var c = document.createElement("canvas");
+        c.width = W; c.height = H;
+        var g = c.getContext("2d");
+        render(g, W, H);
+        tone(g, W, H);
+        return new Promise(function (res, rej) {
+          c.toBlob(function (b) { b ? res({ blob: b, w: W, h: H }) : rej(new Error("画像を作れませんでした。")); },
+                   "image/jpeg", q);
+        });
+      }
+      var tw = out.w >= out.h ? 400 : Math.round(400 * out.w / out.h);
+      var th = out.w >= out.h ? Math.round(400 * out.h / out.w) : 400;
+      Promise.all([bake(out.w, out.h, photoSize().q), bake(tw, th, 0.72)])
+        .then(function (r) { return saveFixed(it, r[0], r[1]); })
+        .then(function () { closeSheet(); toast("直しました"); if (after) after(); })
+        .catch(function (e) { say(why(e), true); });
+    };
+  }
+
+  /* 直したものを入れ替える。いちばん最初の1回だけ、元の写真を
+     別にとっておく。あとで「元に戻す」ができるように */
+  function saveFixed(it, full, thumb) {
+    var rows = [];
+    var first = !it.origId;
+    if (first) {
+      it.origId = uid();
+      rows.push(["blobs", { id: it.origId, blob: null }]);   /* 下で入れ替える */
+    }
+    return (first
+      ? DB.get("blobs", it.blobId).then(function (r) {
+          rows[0] = ["blobs", { id: it.origId, blob: r && r.blob }];
+        })
+      : Promise.resolve()
+    ).then(function () {
+      rows.push(["blobs", { id: it.blobId, blob: full.blob }]);
+      rows.push(["blobs", { id: it.thumbId, blob: thumb.blob }]);
+      it.w = full.w; it.h = full.h;
+      it.bytes = full.blob.size + thumb.blob.size;
+      it.fixedAt = Date.now();
+      rows.push(["items", it]);
+      return DB.putMany(rows);
+    }).then(function () { return freshenItem(it); });
+  }
+
+  /* 中身を差し替えたので、画面が持っている古い見た目を捨てる */
+  function freshenItem(it) {
+    [it.blobId, it.thumbId].forEach(function (k) {
+      if (k && urlCache[k]) { try { URL.revokeObjectURL(urlCache[k]); } catch (e) {} delete urlCache[k]; }
+    });
+    return ensureUrls([it.blobId, it.thumbId]).then(function () {
+      paintStage();
+    });
+  }
+
+  function unfixItem(it, after) {
+    if (!it.origId) return;
+    DB.get("blobs", it.origId).then(function (r) {
+      if (!r || !r.blob) throw new Error("元の写真が残っていませんでした。");
+      return Promise.all([shrink(r.blob, photoSize().edge, photoSize().q), shrink(r.blob, 400, 0.72)])
+        .then(function (x) {
+          it.w = x[0].w; it.h = x[0].h;
+          it.bytes = x[0].blob.size + x[1].blob.size;
+          delete it.fixedAt;
+          var oid = it.origId; delete it.origId;
+          return DB.putMany([
+            ["blobs", { id: it.blobId, blob: x[0].blob }],
+            ["blobs", { id: it.thumbId, blob: x[1].blob }],
+            ["items", it]
+          ]).then(function () { return DB.del("blobs", oid).catch(function () {}); });
+        });
+    }).then(function () {
+      return freshenItem(it);
+    }).then(function () {
+      closeSheet(); toast("元に戻しました"); if (after) after();
+    }).catch(function (e) { toast(why(e), true); });
   }
 
   /* ============================================================

@@ -426,6 +426,11 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
     linear-gradient(to bottom, transparent 33.2%, rgba(255,255,255,.35) 33.2%, rgba(255,255,255,.35) 33.6%, transparent 33.6%,
                     transparent 66.4%, rgba(255,255,255,.35) 66.4%, rgba(255,255,255,.35) 66.8%, transparent 66.8%);
 }
+/* 回転ボタンなど、横に2つ並べる列 */
+.fxrow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px}
+.fxrow .ghost{flex:1 1 0; min-width:120px; justify-content:center; text-align:center}
+/* 直す画面の下書き。枠いっぱいに置く */
+.cropbox canvas{display:block; width:100%; height:100%}
 .zoom{
   width:100%; appearance:none; -webkit-appearance:none;
   height:26px; background:none; margin:0;
