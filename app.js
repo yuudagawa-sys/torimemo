@@ -574,16 +574,29 @@
   var SORTS = [
     { k: "new", t: "新しい順" },
     { k: "old", t: "古い順" },
-    { k: "fav", t: "★から" }
+    { k: "fav", t: "★から" },
+    { k: "mine", t: "自分の順" }
   ];
   var sortMode = "old";
+  /* 「自分の順」は、フォルダの中でだけ意味がある。棚では出さない */
+  function sortList() {
+    return screen === "shelf" ? SORTS.filter(function (x) { return x.k !== "mine"; }) : SORTS;
+  }
   function sortLabel() {
-    for (var i = 0; i < SORTS.length; i++) if (SORTS[i].k === sortMode) return SORTS[i].t;
+    var m = (screen === "shelf" && sortMode === "mine") ? "new" : sortMode;
+    for (var i = 0; i < SORTS.length; i++) if (SORTS[i].k === m) return SORTS[i].t;
     return SORTS[0].t;
   }
   function sortItems(a) {
     var out = a.slice();
-    if (sortMode === "fav") {
+    if (sortMode === "mine") {
+      /* 自分で並べた順。まだ番号のないものは、撮った順で後ろにつける */
+      out.sort(function (x, y) {
+        var a = typeof x.ord === "number" ? x.ord : Infinity;
+        var b = typeof y.ord === "number" ? y.ord : Infinity;
+        return (a - b) || ((x.createdAt || 0) - (y.createdAt || 0));
+      });
+    } else if (sortMode === "fav") {
       out.sort(function (x, y) {
         return ((y.fav ? 1 : 0) - (x.fav ? 1 : 0)) || ((y.createdAt || 0) - (x.createdAt || 0));
       });
@@ -752,8 +765,10 @@
     applyLook();
     viewMode = recall("view") === "feed" ? "feed" : "grid";
     if (recall("shelfview") === "list") shelfView = "list";
+    /* 並び順は SORTS を見て確かめる。ここに名前を書き並べると、
+       並び順を足したときに直し忘れて復元されなくなる */
     var sv = recall("sort");
-    if (sv === "new" || sv === "old" || sv === "fav") sortMode = sv;
+    if (SORTS.some(function (x) { return x.k === sv; })) sortMode = sv;
     syncViewToggle();
     paintShell();
     migrateCats().then(function () {
@@ -1644,32 +1659,68 @@
     });
   }
 
-  /* 写真を長押しすると、選ぶ状態に入る。iPhoneのホーム画面と同じ感覚 */
+  /* 写真を長押しすると、その1枚が持ち上がる。
+     そのまま指を動かせば並べ替え、指を離せば「選ぶ」に入る。
+     iPhoneのホーム画面と同じで、どちらも長押しから始まる */
   function wireItemHold(box) {
     if (box._itemwired) return;
     box._itemwired = true;
-    var timer = null, sx = 0, sy = 0, held = false, id = null;
+    var timer = null, sx = 0, sy = 0, held = false, id = null, node = null, drag = null;
+
+    function lift(n) {
+      n.classList.add("lifted");
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
+    }
+    function drop() {
+      if (node) node.classList.remove("lifted");
+    }
+
+    /* 写真をつまむと、ブラウザが「画像を持ち出す」動作を始めて
+       指の追跡が打ち切られてしまう。これを止める */
+    box.addEventListener("dragstart", function (e) { e.preventDefault(); });
+    /* 持ち上がっているあいだは、指で動かしても画面をスクロールさせない。
+       touch-action だけでは、指が動き出したあとに変えても間に合わない */
+    box.addEventListener("touchmove", function (e) {
+      if (held) e.preventDefault();
+    }, { passive: false });
 
     box.addEventListener("pointerdown", function (e) {
       var f = e.target.closest("[data-open]");
       if (!f) return;
-      id = f.getAttribute("data-open");
-      sx = e.clientX; sy = e.clientY; held = false;
+      id = f.getAttribute("data-open"); node = f;
+      sx = e.clientX; sy = e.clientY; held = false; drag = null;
       clearTimeout(timer);
-      timer = setTimeout(function () {
-        held = true;
-        if (!picking) { picking = true; picked = {}; }
-        picked[id] = true;
-        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
-        paintStage();
-      }, 450);
+      timer = setTimeout(function () { held = true; lift(f); }, 450);
     });
+
     box.addEventListener("pointermove", function (e) {
-      if (Math.abs(e.clientX - sx) > 9 || Math.abs(e.clientY - sy) > 9) clearTimeout(timer);
+      var far = Math.abs(e.clientX - sx) > 9 || Math.abs(e.clientY - sy) > 9;
+      if (!held) { if (far) clearTimeout(timer); return; }
+      /* 持ち上がっている状態で動かしたら、並べ替えに入る */
+      if (!drag && far && !picking && node && node.parentNode
+          && node.parentNode.classList.contains("sheetgrid")) {
+        try { box.setPointerCapture(e.pointerId); } catch (x) {}
+        drag = beginReorder(node, e);
+      }
+      if (drag) { e.preventDefault(); drag.move(e.clientX, e.clientY); }
     });
+
     ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
-      box.addEventListener(k, function () { clearTimeout(timer); });
+      box.addEventListener(k, function (e) {
+        clearTimeout(timer);
+        if (drag) { var d = drag; drag = null; drop(); d.end(); return; }
+        if (held && k === "pointerup") {
+          /* 動かさずに離した → これまで通り「選ぶ」に入る */
+          drop();
+          if (!picking) { picking = true; picked = {}; }
+          picked[id] = true;
+          paintStage();
+          return;
+        }
+        drop();
+      });
     });
+
     /* 長押しのあとに続くクリックは飲み込む */
     box.addEventListener("click", function (e) {
       if (!held) return;
@@ -1679,6 +1730,87 @@
     box.addEventListener("contextmenu", function (e) {
       if (e.target.closest("[data-open]")) e.preventDefault();
     });
+  }
+
+  /* 並べ替えの本体。指の下に分身を置いて、近いタイルの前か後ろに
+     本体を差し込む。並びはその場で組み変わるので、置いた先が目で分かる */
+  function beginReorder(node, e) {
+    var grid = node.parentNode;
+    var r = node.getBoundingClientRect();
+    var ghost = node.cloneNode(true);
+    ghost.className = "dragghost";
+    ghost.style.width = r.width + "px";
+    ghost.style.height = r.height + "px";
+    document.body.appendChild(ghost);
+    node.classList.add("ghosted");
+    grid.classList.add("reordering");
+
+    /* 画面のふちに寄せたら、ひとりでにスクロールする */
+    var edge = 0;
+    var tick = setInterval(function () { if (edge) window.scrollBy(0, edge); }, 16);
+
+    function place(x, y) {
+      ghost.style.left = x + "px";
+      ghost.style.top = y + "px";
+      var h = window.innerHeight;
+      edge = y < 110 ? -9 : (y > h - 150 ? 9 : 0);
+
+      /* いま指が乗っているタイルだけを見る。いちばん近いタイルを探す
+         やり方だと、行き過ぎたときに隣の行を拾って、並びが行き来してしまう */
+      var over = null;
+      Array.prototype.forEach.call(grid.children, function (t) {
+        if (t === node) return;
+        var b = t.getBoundingClientRect();
+        if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) over = t;
+      });
+      if (!over) return;
+      var b = over.getBoundingClientRect();
+      /* そのタイルの左半分なら手前、右半分なら後ろに入れる */
+      grid.insertBefore(node, x > b.left + b.width / 2 ? over.nextSibling : over);
+    }
+
+    return {
+      move: place,
+      end: function () {
+        clearInterval(tick);
+        try { ghost.remove(); } catch (x) {}
+        node.classList.remove("ghosted");
+        grid.classList.remove("reordering");
+        saveOrder(grid);
+      }
+    };
+  }
+
+  /* 並べた結果を残す。絞り込みで隠れているものを巻き込まないよう、
+     いま見えているものが元から持っていた番号を、順番だけ入れ替えて配り直す */
+  function saveOrder(grid) {
+    var rows = [];
+
+    /* まだ番号がないなら、いまの並びを土台にして全部に振る */
+    if (items.some(function (x) { return typeof x.ord !== "number"; })) {
+      sortItems(items.slice()).forEach(function (it, i) {
+        it.ord = i; rows.push(["items", it]);
+      });
+    }
+
+    var ids = Array.prototype.slice.call(grid.children)
+      .map(function (n) { return n.getAttribute("data-open"); })
+      .filter(Boolean);
+    var seen = ids.map(itemById).filter(Boolean);
+    var slots = seen.map(function (it) { return it.ord; }).sort(function (a, b) { return a - b; });
+    seen.forEach(function (it, i) {
+      if (it.ord !== slots[i]) { it.ord = slots[i]; }
+      rows.push(["items", it]);
+    });
+
+    sortMode = "mine";
+    remember("sort", "mine");
+    var sb = $("btnSort");
+    if (sb) sb.textContent = sortLabel();
+    DB.putMany(rows).then(function () {
+      paintRail(); paintStage();
+      toast("この並びで覚えました");
+    }).catch(function (e) { toast(why(e), true); paintStage(); });
   }
 
   /* 選んでいる間、下に出る帯 */
@@ -1856,9 +1988,9 @@
     paintStage();
   };
   $("btnSort").onclick = function () {
-    var i = 0;
-    for (var k = 0; k < SORTS.length; k++) if (SORTS[k].k === sortMode) i = k;
-    sortMode = SORTS[(i + 1) % SORTS.length].k;
+    var ls = sortList(), i = -1;
+    for (var k = 0; k < ls.length; k++) if (ls[k].k === sortMode) i = k;
+    sortMode = ls[(i + 1) % ls.length].k;
     remember("sort", sortMode);
     this.textContent = sortLabel();
     paintStage();

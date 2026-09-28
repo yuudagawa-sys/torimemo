@@ -426,6 +426,26 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
     linear-gradient(to bottom, transparent 33.2%, rgba(255,255,255,.35) 33.2%, rgba(255,255,255,.35) 33.6%, transparent 33.6%,
                     transparent 66.4%, rgba(255,255,255,.35) 66.4%, rgba(255,255,255,.35) 66.8%, transparent 66.8%);
 }
+/* タイルの中身はイベントを受けない。受けると、画像そのものを
+   ブラウザが持ち出そうとして、長押しからの並べ替えが途切れる */
+.sheetgrid .frame img, .sheetgrid .frame video{
+  pointer-events:none; -webkit-user-drag:none; user-select:none;
+}
+.sheetgrid .frame{ -webkit-touch-callout:none }
+/* 長押しで持ち上がった1枚 */
+.frame.lifted{ transform:scale(1.06); box-shadow:0 8px 22px rgba(0,0,0,.28); z-index:3 }
+/* 並べ替え中、元の場所に残る影 */
+.frame.ghosted{ opacity:.22 }
+.sheetgrid.reordering{ touch-action:none }
+/* 指について回る分身 */
+.dragghost{
+  position:fixed; z-index:95; pointer-events:none; margin:0; padding:0;
+  border-radius:var(--r); overflow:hidden; opacity:.95;
+  transform:translate(-50%,-50%) scale(1.06);
+  box-shadow:0 12px 30px rgba(0,0,0,.35);
+}
+.dragghost img, .dragghost video{ width:100%; height:100%; object-fit:cover; display:block }
+
 /* 回転ボタンなど、横に2つ並べる列 */
 .fxrow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px}
 .fxrow .ghost{flex:1 1 0; min-width:120px; justify-content:center; text-align:center}
