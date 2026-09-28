@@ -722,6 +722,15 @@
   /* 古い版では、写真1件ごとに「カテゴリ」が付いていた。
      カテゴリはフォルダの上位（棚）に移したので、
      写真に付いていた分類はタグに移し替える。消えるものは無い。 */
+  /* browseAll は別に読み込んだ写しで、開いているフォルダの items とは
+     別のもの。片方だけ書き換えると、棚の表紙が古いままになる */
+  function syncBrowse(list) {
+    if (!browseAll || !list || !list.length) return;
+    var m = {};
+    list.forEach(function (x) { if (x && x.id) m[x.id] = x; });
+    browseAll.forEach(function (x, i) { if (m[x.id]) browseAll[i] = m[x.id]; });
+  }
+
   /* browseAll は棚の表紙・点数・タグのもと。消したら落としておく */
   function forgetFromBrowse(id) {
     if (!browseAll) return;
@@ -1456,12 +1465,19 @@
       return c === curCat;
     }
 
-    var cover = {}, counts = {}, favs = {};
+    var cover = {}, counts = {}, favs = {}, byEx = {};
     all.forEach(function (it) {
       counts[it.exId] = (counts[it.exId] || 0) + 1;
       if (it.fav) favs[it.exId] = (favs[it.exId] || 0) + 1;
-      if (it.kind !== "photo") return;
-      if (!cover[it.exId] || (it.createdAt || 0) < (cover[it.exId].createdAt || 0)) cover[it.exId] = it;
+      (byEx[it.exId] || (byEx[it.exId] = [])).push(it);
+    });
+    /* 表紙は、そのフォルダを開いたとき左上に来る写真。
+       並べ替えると表紙もついてくる */
+    Object.keys(byEx).forEach(function (ex) {
+      var rows = sortItems(byEx[ex]);
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].kind === "photo") { cover[ex] = rows[i]; return; }
+      }
     });
 
     var folders = sortFolders(exs, favs).filter(function (e) {
@@ -1808,6 +1824,7 @@
     var sb = $("btnSort");
     if (sb) sb.textContent = sortLabel();
     DB.putMany(rows).then(function () {
+      syncBrowse(rows.map(function (r) { return r[1]; }));
       paintRail(); paintStage();
       toast("この並びで覚えました");
     }).catch(function (e) { toast(why(e), true); paintStage(); });
@@ -4049,6 +4066,7 @@
 
   /* 中身を差し替えたので、画面が持っている古い見た目を捨てる */
   function freshenItem(it) {
+    syncBrowse([it]);
     [it.blobId, it.thumbId].forEach(function (k) {
       if (k && urlCache[k]) { try { URL.revokeObjectURL(urlCache[k]); } catch (e) {} delete urlCache[k]; }
     });
