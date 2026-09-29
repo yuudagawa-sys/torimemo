@@ -432,6 +432,23 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
   pointer-events:none; -webkit-user-drag:none; user-select:none;
 }
 .sheetgrid .frame{ -webkit-touch-callout:none }
+/* 1点の写真と、その左右の送りボタン */
+.shotwrap{position:relative}
+.stepper{
+  position:absolute; top:50%; transform:translateY(-50%);
+  width:38px; height:38px; display:grid; place-items:center;
+  border-radius:999px; border:0; cursor:pointer;
+  background:rgba(14,18,16,.42); color:#fff;
+  backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);
+}
+.stepper svg{width:17px;height:17px}
+.stepper.prev{left:8px}
+.stepper.next{right:8px}
+/* 戻る矢印を裏返して次へにする。絵を2つ持たない */
+.stepper.next svg{transform:scaleX(-1)}
+.stepper:disabled{opacity:0; pointer-events:none}
+.stepper:active{background:rgba(14,18,16,.62)}
+
 /* 引っぱって落とすときの覆い */
 .dropveil{
   position:fixed; inset:0; z-index:120; display:grid; place-items:center;

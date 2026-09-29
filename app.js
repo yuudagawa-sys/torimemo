@@ -3699,14 +3699,26 @@
     ensureUrls([it.blobId]).then(function () {
       var src = urlCache[it.blobId] || "";
       var media;
+      /* 隣の1件へ送る矢印。指ではスワイプできるが、
+         パソコンには払う動きがないので、押せるものを重ねておく */
+      function stepArrows() {
+        return '<button class="stepper prev" id="mPrev" aria-label="前の1件">'
+          + '<svg><use href="#i-back"/></svg></button>'
+          + '<button class="stepper next" id="mNext" aria-label="次の1件">'
+          + '<svg><use href="#i-back"/></svg></button>';
+      }
       if (it.kind === "photo") {
-        media = '<img class="shot" id="mShot" src="' + src + '" alt="">'
+        media = '<div class="shotwrap">'
+          + '<img class="shot" id="mShot" src="' + src + '" alt="">'
+          + stepArrows() + "</div>"
           + '<div class="fxrow" style="margin-top:6px">'
           + '<button class="ghost" id="mFix">写真を直す</button>'
           + (it.origId ? '<button class="ghost" id="mUnfix">元に戻す</button>' : "")
           + "</div>";
       }
-      else if (it.kind === "video") media = '<video class="play" id="mShot" src="' + src + '" controls playsinline preload="metadata"></video>';
+      else if (it.kind === "video") media = '<div class="shotwrap">'
+        + '<video class="play" id="mShot" src="' + src + '" controls playsinline preload="metadata"></video>'
+        + stepArrows() + "</div>";
       else if (it.kind === "text") media = "";
       else if (it.kind === "file") media = fileTile(it, true) + '<button class="ghost" id="mOpen" style="justify-self:start">この書類を開く</button>';
       else media = '<audio src="' + src + '" controls preload="metadata"></audio>';
@@ -3770,6 +3782,14 @@
       }
       var shot = $("mShot");
       if (shot) attachSwipe(shot, function () { step(-1); }, function () { step(1); });
+
+      var pv = $("mPrev"), nx = $("mNext");
+      if (pv && nx) {
+        pv.disabled = pos <= 1;
+        nx.disabled = pos >= list.length;
+        pv.onclick = function () { step(-1); };
+        nx.onclick = function () { step(1); };
+      }
 
       var op = $("mOpen");
       if (op) op.onclick = function () {
@@ -4025,9 +4045,16 @@
 
     function paintFix() {
       var out = outSize();
-      box.style.aspectRatio = out.w + "/" + out.h;
-      var W = box.clientWidth || 320;
+      /* 下書きが大きすぎると、回転や明るさの操作が画面の外に出てしまう。
+         縦に上限を設けて、写真と操作がいつも一緒に見えるようにする */
+      var room = Math.max(160, Math.min(Math.round(window.innerHeight * 0.34), 400));
+      box.style.aspectRatio = "auto";
+      box.style.marginInline = "auto";
+      var W = (box.parentNode ? box.parentNode.clientWidth : 0) || box.clientWidth || 320;
       var H = Math.round(W * out.h / out.w);
+      if (H > room) { H = room; W = Math.round(H * out.w / out.h); }
+      box.style.width = W + "px";
+      box.style.height = H + "px";
       var dpr = Math.min(2, window.devicePixelRatio || 1);
       cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
       cv.style.width = W + "px"; cv.style.height = H + "px";
