@@ -2254,13 +2254,63 @@
     return false;
   }
 
+  /* 落ちてきたものを読む。フォルダごと落とされたら中まで辿り、
+     その名前をフォルダ名の下書きに使う。
+     entry は drop の瞬間にしか取れないので、その場で控える */
+  function readDrop(dt) {
+    var flat = Array.prototype.slice.call(dt.files || []);
+    var items = dt.items;
+    var entries = [];
+    if (items && items.length && typeof items[0].webkitGetAsEntry === "function") {
+      for (var i = 0; i < items.length; i++) {
+        var e = items[i].webkitGetAsEntry();
+        if (e) entries.push(e);
+      }
+    }
+    if (!entries.length) return Promise.resolve({ files: flat, name: "" });
+    var name = (entries.length === 1 && entries[0].isDirectory) ? entries[0].name : "";
+    var hasDir = entries.some(function (e) { return e.isDirectory; });
+    /* フォルダが混ざっているときだけ中まで辿る。
+       そうでなければ dataTransfer.files のほうが確実で、
+       entry が1つでも読めないと取りこぼす */
+    if (!hasDir) return Promise.resolve({ files: flat, name: "" });
+    return walkEntries(entries).then(function (files) {
+      return { files: files.length ? files : flat, name: name };
+    }).catch(function () { return { files: flat, name: name }; });
+  }
+
+  function walkEntries(entries) {
+    return Promise.all(entries.map(function (e) {
+      if (e.isFile) {
+        return new Promise(function (ok) { e.file(function (f) { ok([f]); }, function () { ok([]); }); });
+      }
+      if (!e.isDirectory) return Promise.resolve([]);
+      var rd = e.createReader(), all = [];
+      /* readEntries は一度に100件までしか返さない。空が返るまで繰り返す */
+      function more() {
+        return new Promise(function (ok) {
+          rd.readEntries(function (batch) {
+            if (!batch.length) return ok(null);
+            all = all.concat(batch);
+            ok(true);
+          }, function () { ok(null); });
+        }).then(function (again) { return again ? more() : walkEntries(all); });
+      }
+      return more();
+    })).then(function (lists) {
+      return lists.reduce(function (a, b) { return a.concat(b); }, []);
+    });
+  }
+
   /* 種類ごとに分けて、それぞれの取り込みに渡す */
-  function takeDropped(files) {
+  function takeDropped(files, folderName) {
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
     if (!curEx) {
-      toast("先に" + LL() + "をつくってください。", true);
-      newExDialog();
+      /* フォルダが無いなら、落としたものを抱えたまま新規作成を開く。
+         作り終えたらそのまま取り込む。落とし直させない */
+      toast("入れる" + LL() + "を決めてください");
+      newExDialog(null, { name: folderName || "", then: function () { takeDropped(list); } });
       return;
     }
     var pics = [], vids = [], auds = [], docs = [];
@@ -2312,7 +2362,7 @@
     window.addEventListener("drop", function (e) {
       if (!isFileDrag(e)) return;
       e.preventDefault(); hide();
-      takeDropped(e.dataTransfer.files);
+      readDrop(e.dataTransfer).then(function (r) { takeDropped(r.files, r.name); });
     });
   }
 
@@ -2397,8 +2447,10 @@
   /* ============================================================
      展示会
      ============================================================ */
-  function newExDialog(ex) {
-    var e = ex || { name: "", date: today(), venue: "", note: "", cat: "" };
+  /* opt: { name: 名前の下書き, then: 作り終えたあとにやること } */
+  function newExDialog(ex, opt) {
+    opt = opt || {};
+    var e = ex || { name: opt.name || "", date: today(), venue: "", note: "", cat: "" };
     var tpl = tplChips(e.tpl || "");
 
     /* 上に「やめて戻る」と「これでつくる」を並べる。下まで送らなくても決められる */
@@ -2526,6 +2578,8 @@
         return ex ? loadItems().then(paint) : openFolder(rec.id);
       }).then(function () {
         toast(ex ? "保存しました" : "つくりました");
+        /* 落としたものを抱えて来ているなら、ここで取り込む */
+        if (!ex && typeof opt.then === "function") opt.then(rec);
       }).catch(function (er) { toast(why(er), true); });
     };
 
