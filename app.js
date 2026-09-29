@@ -275,10 +275,13 @@
     return out;
   }
 
-  /* 端末に保存させる（iPhoneでは共有シートが開きます） */
+  /* 書き出したものを渡す。
+     指で使う端末では共有シートを開く（メール・LINE・AirDropへ）。
+     パソコンではそのまま保存する。Mac の共有シートには
+     「保存」が無く、いったんメモやメールに送るしかないため */
   function handOver(blob, filename) {
     var f = new File([blob], filename, { type: blob.type });
-    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+    if (!onDesktop() && navigator.canShare && navigator.canShare({ files: [f] })) {
       return navigator.share({ files: [f], title: filename })
         .then(function () { return "shared"; })
         .catch(function (e) {

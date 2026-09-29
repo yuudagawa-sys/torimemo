@@ -91,7 +91,16 @@ button{cursor:pointer;background:none;border:0;padding:0}
   background:var(--paper);
   border-bottom:1px solid var(--line);
 }
-.top-in{padding:12px var(--pad) 0; display:flex; flex-direction:column; gap:6px}
+/* 上の帯。日付と点数はフォルダ名と同じ行の右端に置く。
+   下に回すと行がひとつ増えて、棚とフォルダで帯の高さが変わってしまう */
+.top-in{
+  padding:12px var(--pad) 0;
+  display:grid; grid-template-columns:minmax(0,1fr) auto;
+  align-items:baseline; column-gap:12px; row-gap:6px;
+}
+.top-in .excat{grid-column:1 / -1}
+.top-in .exline{grid-column:1}
+.top-in .exmeta{grid-column:2; justify-self:end; flex-wrap:nowrap; white-space:nowrap}
 .crown{display:flex; align-items:baseline; justify-content:space-between; gap:10px; min-width:0}
 .wordmark{
   font-family:var(--display); font-weight:700; font-size:17px;
@@ -1379,8 +1388,11 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 /* ================= 最初の画面のタイトル（中央・行間を空ける） ================= */
 :root[data-screen="shelf"] .exline{ display:none; }
 :root[data-screen="shelf"] .excat{ display:none; }
-:root[data-screen="shelf"] .top-in{ padding-top:10px; gap:0; }
-:root[data-screen="shelf"] .exmeta{ justify-content:flex-end; }
+/* 棚は見出しの行がないぶん帯が低くなり、フォルダへ移ると
+   線の高さが飛ぶ。棚側でそのぶんを先に空けておいて、
+   行き来しても線が動かないようにする */
+:root[data-screen="shelf"] .top-in{ padding-top:10px; row-gap:0; min-height:36px; }
+:root[data-screen="shelf"] .exmeta{ grid-column:1 / -1; justify-content:flex-end; }
 
 /* フォルダの一覧（元の形。写真とフォルダ名と点数） */
 .folderrow{
