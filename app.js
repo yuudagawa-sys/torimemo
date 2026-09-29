@@ -961,6 +961,7 @@
       + '<input type="color" id="cdFree" value="' + esc(cur || "#F4F4F1") + '"></label></div>'
       + '<div class="minibtns"><button class="ghost" id="cdReset">戻す</button>'
       + '<button class="cta" id="cdOk">閉じる</button></div>';
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     function put(v) {
@@ -1002,6 +1003,7 @@
       + '<button class="cta" id="prYes" disabled>申し込む（準備中）</button></div>'
       + '<button class="ghost" id="prTry" style="width:100%;margin-top:8px">'
       + (isPro() ? "元に戻す（確認用）" : "試しに使ってみる（確認用）") + "</button>";
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
     $("prNo").onclick = miniClose;
     $("prTry").onclick = function () {
@@ -1024,6 +1026,7 @@
       + '<button class="cta" id="adYes" disabled>購入する（準備中）</button></div>'
       + '<button class="ghost" id="adTry" style="width:100%;margin-top:8px">'
       + (adFree() ? "広告を戻す（確認用）" : "試しに消してみる（確認用）") + "</button>";
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
     $("adNo").onclick = miniClose;
     $("adTry").onclick = function () {
@@ -2313,8 +2316,23 @@
   /* ============================================================
      シートとダイアログ
      ============================================================ */
+  /* 入力欄の自動入力を切る。切らないと Mac の Safari が
+     住所や氏名を埋めようとして、キーチェーンのパスワードを聞いてくる。
+     フォルダ名や場所はそういう類のものではないので、出すだけ邪魔になる */
+  function noAutofill(root) {
+    if (!root) return;
+    Array.prototype.forEach.call(root.querySelectorAll("input, textarea"), function (e) {
+      var t = (e.type || "").toLowerCase();
+      if (["file", "checkbox", "radio", "range", "color"].indexOf(t) >= 0) return;
+      e.setAttribute("autocomplete", "off");
+      e.setAttribute("autocorrect", "off");
+      e.setAttribute("data-form-type", "other");
+    });
+  }
+
   function sheet(html, cls) {
     $("panel").innerHTML = html;
+    noAutofill($("panel"));
     $("scrim").className = "scrim on" + (cls ? " " + cls : "");
     document.body.style.overflow = "hidden";
   }
@@ -2348,6 +2366,7 @@
       + '<input class="inp" id="miTxt" value="' + esc(o.value || "") + '" placeholder="' + esc(o.placeholder || "") + '">'
       + '<div class="minibtns"><button class="ghost" id="miNo">やめる</button>'
       + '<button class="cta" id="miYes">' + esc(o.ok || "決定") + "</button></div>";
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
     var go = function () {
       var v = $("miTxt").value.trim();
@@ -2366,6 +2385,7 @@
       + '<div class="minibtns"><button class="ghost" id="miNo">やめる</button>'
       + '<button class="cta" id="miYes" style="background:' + (o.safe ? "var(--ink)" : "var(--rec)") + ';color:#fff">'
       + esc(o.ok || "削除する") + "</button></div>";
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
     $("miYes").onclick = function () { miniClose(); done(); };
     $("miNo").onclick = function () { miniClose(); if (o.cancel) o.cancel(); };
@@ -2747,6 +2767,7 @@
 
       + '<div class="minibtns"><button class="ghost" id="tpNo">やめる</button>'
       + '<button class="cta" id="tpYes">' + (editing ? "保存する" : "登録する") + "</button></div>";
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     function preview() {
@@ -2890,6 +2911,7 @@
       + '<input class="inp" id="etIn" value="' + esc(t) + '">'
       + '<div class="minibtns"><button class="danger" id="etDel">このタグを消す</button>'
       + '<button class="cta" id="etOk">名前を変える</button></div>';
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     $("etOk").onclick = function () {
@@ -2955,6 +2977,7 @@
       + '<input class="inp" id="ctIn" value="' + esc(e.cat || "") + '" placeholder="" autocomplete="off"></div>'
       + '<div class="minibtns"><button class="ghost" id="ctNo">やめる</button>'
       + '<button class="cta" id="ctYes">決める</button></div>';
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     var box = $("ctPast");
@@ -3259,6 +3282,7 @@
       + '<label class="sizeask"><input type="checkbox" id="spNo"> 次からきかない</label>'
       + '<div class="minibtns"><button class="ghost" id="spOne">1つにまとめる</button>'
       + '<button class="cta" id="spSplit">' + gs.length + " つに分ける</button></div>";
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     function remember0() { if ($("spNo").checked) remember("nosplit", "1"); }
@@ -3330,6 +3354,7 @@
       + '<label class="sizeask"><input type="checkbox" id="szNo"> 次からきかない（設定でいつでも戻せます）</label>'
       + '<div class="minibtns"><button class="ghost" id="szCancel">やめる</button>'
       + '<button class="cta" id="szGo">取り込む</button></div>';
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     var pick = cur;
@@ -3457,6 +3482,7 @@
           : "")
       + '<div class="minibtns"><button class="ghost" id="tgNo">あとで</button>'
       + '<button class="cta" id="tgYes">付ける</button></div>';
+    noAutofill($("minibox"));
     $("mini").className = "mini on";
 
     Array.prototype.forEach.call($("minibox").querySelectorAll("[data-sugt]"), function (b) {
