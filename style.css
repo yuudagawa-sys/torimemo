@@ -432,6 +432,20 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
   pointer-events:none; -webkit-user-drag:none; user-select:none;
 }
 .sheetgrid .frame{ -webkit-touch-callout:none }
+/* 引っぱって落とすときの覆い */
+.dropveil{
+  position:fixed; inset:0; z-index:120; display:grid; place-items:center;
+  background:rgba(12,16,14,.42); padding:24px;
+}
+.dropbox{
+  display:grid; gap:6px; justify-items:center; text-align:center;
+  padding:30px 34px; border-radius:16px;
+  background:var(--card); border:2px dashed var(--mark);
+  box-shadow:0 18px 50px rgba(12,16,14,.3);
+}
+.dropbox b{font-size:18px; color:var(--ink)}
+.dropbox span{font-size:12.5px; color:var(--ink2); line-height:1.7}
+
 /* 長押しで持ち上がった1枚 */
 .frame.lifted{ transform:scale(1.06); box-shadow:0 8px 22px rgba(0,0,0,.28); z-index:3 }
 /* 並べ替え中、元の場所に残る影 */
@@ -1001,7 +1015,7 @@ header.top{padding-top:env(safe-area-inset-top)}
 }
 .tabbar button svg{width:22px;height:22px;flex:0 0 auto}
 /* 歯車は線が込んでいるぶん大きく見えるので、少しだけ落とす */
-.tabbar button[data-nav="more"] svg{width:19px;height:19px}
+
 .tabbar button span{
   font-size:10.5px; letter-spacing:.02em; white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; max-width:100%;
@@ -1401,7 +1415,8 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   .fab.wide{padding:12px 20px 12px 16px; font-size:14px}
   .tabbar{padding-top:5px}
   .tabbar button svg{width:20px;height:20px}
-  .tabbar button[data-nav="more"] svg{width:17.5px;height:17.5px}
+  .tabbar .addtab svg{width:20px;height:20px;padding:4px}
+
 }
 @media (min-width:700px){
   main{max-width:720px; margin:0 auto}
@@ -1456,8 +1471,9 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 /* ＋のタブ。差し色は使わず、地の濃いところで少しだけ立たせる */
 .tabbar .addtab{color:var(--ink)}
 .tabbar .addtab svg{
-  width:24px; height:24px;
-  border-radius:999px; padding:3px; box-sizing:content-box;
+  /* 字の大きさは他の3つと同じ。丸囲いのぶんだけ外枠が大きくなる */
+  width:22px; height:22px;
+  border-radius:999px; padding:4px; box-sizing:content-box;
   background:var(--sunk);
   background:color-mix(in srgb, var(--ink) 11%, transparent);
 }

@@ -779,6 +779,7 @@
     var sv = recall("sort");
     if (SORTS.some(function (x) { return x.k === sv; })) sortMode = sv;
     syncViewToggle();
+    wireDrop();
     paintShell();
     migrateCats().then(function () {
       return Promise.all([DB.all("exhibitions"), DB.all("templates")]);
@@ -2185,8 +2186,8 @@
         { k: "audio", t: "録音する",   d: "相手の説明をその場で（最長30分）",             i: "i-mic" },
         { k: "video", t: "録画する",   d: "動きをその場で（最長5分）",                    i: "i-vid" }
       ]},
-      { g: "端末から取り込む", rows: [
-        { k: "pick",   t: "写真", d: "カメラロールから。まとめて何枚でも",          i: "i-plus" },
+      { g: onDesktop() ? "パソコンから取り込む（引っぱって落としてもOK）" : "端末から取り込む", rows: [
+        { k: "pick",   t: "写真", d: onDesktop() ? "パソコンの中から。まとめて何枚でも" : "カメラロールから。まとめて何枚でも", i: "i-plus" },
         { k: "impVid", t: "動画", d: "撮りためた動画をそのまま。変換しません",       i: "i-vid" },
         { k: "impAud", t: "音声", d: "ボイスメモや録音ファイルをそのまま",           i: "i-mic" },
         { k: "impDoc", t: "書類", d: "PDF・文書・表・スライドなど。そのままの形で",   i: "i-doc" }
@@ -2222,6 +2223,90 @@
         else if (k === "note") newExDialog();
         else record(k);
       };
+    });
+  }
+
+
+  /* ============================================================
+     パソコンから放り込む
+     ------------------------------------------------------------
+     スマホは「追加」から選ぶが、パソコンでは Finder や
+     エクスプローラから直接引っぱってくるほうが速い。
+     落としたものは中身を見て、写真・動画・音声・書類に振り分ける。
+     ============================================================ */
+  /* 指ではなくマウスやトラックパッドで操る端末か。
+     文言と、引っぱって落とす案内の出し分けに使う */
+  function onDesktop() {
+    try { return window.matchMedia("(hover: hover) and (pointer: fine)").matches; }
+    catch (e) { return false; }
+  }
+
+  function isFileDrag(e) {
+    var t = e.dataTransfer && e.dataTransfer.types;
+    if (!t) return false;
+    for (var i = 0; i < t.length; i++) if (t[i] === "Files") return true;
+    return false;
+  }
+
+  /* 種類ごとに分けて、それぞれの取り込みに渡す */
+  function takeDropped(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    if (!curEx) {
+      toast("先に" + LL() + "をつくってください。", true);
+      newExDialog();
+      return;
+    }
+    var pics = [], vids = [], auds = [], docs = [];
+    list.forEach(function (f) {
+      var m = (f.type || "").toLowerCase();
+      var ex = (f.name || "").split(".").pop().toLowerCase();
+      if (m.indexOf("image/") === 0 || ["jpg","jpeg","png","gif","webp","heic","heif","avif"].indexOf(ex) >= 0) pics.push(f);
+      else if (m.indexOf("video/") === 0 || ["mp4","mov","m4v","webm"].indexOf(ex) >= 0) vids.push(f);
+      else if (m.indexOf("audio/") === 0 || ["m4a","mp3","wav","aac","aiff"].indexOf(ex) >= 0) auds.push(f);
+      else docs.push(f);
+    });
+    if (pics.length) addPhotos(pics);
+    if (vids.length) importMedia(vids, "video");
+    if (auds.length) importMedia(auds, "audio");
+    if (docs.length) importDocs(docs);
+  }
+
+  function wireDrop() {
+    var veil = null, deep = 0;
+
+    function show() {
+      if (veil) return;
+      veil = document.createElement("div");
+      veil.className = "dropveil";
+      veil.innerHTML = '<div class="dropbox"><b>ここに落とす</b>'
+        + "<span>写真・動画・音声・書類。種類はこちらで見分けます</span></div>";
+      document.body.appendChild(veil);
+    }
+    function hide() {
+      deep = 0;
+      if (veil) { try { veil.remove(); } catch (e) {} veil = null; }
+    }
+
+    /* 子要素をまたぐたびに enter と leave が交互に出るので、
+       深さを数えて、本当に外へ出たときだけ消す */
+    window.addEventListener("dragenter", function (e) {
+      if (!isFileDrag(e)) return;
+      e.preventDefault(); deep++; show();
+    });
+    window.addEventListener("dragover", function (e) {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = "copy"; } catch (x) {}
+    });
+    window.addEventListener("dragleave", function (e) {
+      if (!isFileDrag(e)) return;
+      deep--; if (deep <= 0) hide();
+    });
+    window.addEventListener("drop", function (e) {
+      if (!isFileDrag(e)) return;
+      e.preventDefault(); hide();
+      takeDropped(e.dataTransfer.files);
     });
   }
 
