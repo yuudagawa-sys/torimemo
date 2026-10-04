@@ -424,16 +424,53 @@
       return Promise.resolve();
     },
 
-    /* 共有フォルダを1つ作る。返ってくるのはその部屋の番号 */
+    /* フォルダを1つ作る。返ってくるのはその番号 */
     newRoom: function (name) {
       return gCall(DRIVE + "?fields=id", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "Rawpo_" + name,
+          name: name,
           mimeType: "application/vnd.google-apps.folder"
         })
       }).then(function (r) { return r.id; });
+    },
+
+    /* Rawpo の置き場所。無ければ作り、番号を覚えておく。
+       覚えていても捨てられている場合があるので、毎回確かめる */
+    root: function () {
+      var had = recall("driveRoot");
+      function fresh() {
+        var q = encodeURIComponent(
+          "mimeType='application/vnd.google-apps.folder' and name='Rawpo' and trashed=false");
+        return gCall(DRIVE + "?q=" + q + "&fields=files(id)&pageSize=10").then(function (r) {
+          if (r.files && r.files.length) { remember("driveRoot", r.files[0].id); return r.files[0].id; }
+          return Shelf.newRoom("Rawpo").then(function (id) { remember("driveRoot", id); return id; });
+        });
+      }
+      if (!had) return fresh();
+      return gCall(DRIVE + "/" + had + "?fields=id,trashed").then(function (r) {
+        if (r && r.id && !r.trashed) return r.id;
+        throw new Error("消えています");
+      }).catch(function () { remember("driveRoot", ""); return fresh(); });
+    },
+
+    /* 同じ名前のものを探す。あれば入れ替え、無ければ置く。
+       押すたびに増えていかないように */
+    find: function (roomId, name) {
+      var q = encodeURIComponent("'" + roomId + "' in parents and name='"
+        + String(name).replace(/'/g, "\\'") + "' and trashed=false");
+      var f = encodeURIComponent("files(id,name,size,modifiedTime)");
+      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=10")
+        .then(function (r) { return (r.files || [])[0] || null; });
+    },
+
+    save: function (roomId, name, blob) {
+      return Shelf.find(roomId, name).then(function (f) {
+        if (!f) return Shelf.put(roomId, name, blob);
+        return gCall(DRIVE_UP + "/" + f.id + "?uploadType=media&fields=id,modifiedTime",
+                     { method: "PATCH", body: blob });
+      });
     },
 
     /* 1件置く。写真もメモも、1件＝1ファイルにする。
@@ -4441,12 +4478,86 @@
      ここが通らないと先へ進めないので、同期を組む前に
      実機で確かめられるようにしてある。
      ============================================================ */
+  /* この端末の呼び名。預けたものを見分けるために使う */
+  function deviceName() {
+    var n = (recall("devname") || "").trim();
+    if (n) return n;
+    var u = navigator.userAgent || "";
+    if (/iPhone/.test(u)) return "iPhone";
+    if (/iPad/.test(u)) return "iPad";
+    if (/Android/.test(u)) return "Android";
+    if (/Macintosh|Mac OS/.test(u)) return "Mac";
+    if (/Windows/.test(u)) return "Windows";
+    return "この端末";
+  }
+  function bundleName(dev) { return "Rawpo_まるごと_" + safeName(dev || deviceName()) + ".zip"; }
+
+  /* ドライブに預ける。端末ごとに1つだけ置き、押すたびに入れ替える */
+  function pushAll(after) {
+    var room = null;
+    toast("ドライブにつないでいます…");
+    Shelf.root().then(function (id) {
+      room = id;
+      return makeBackup(null, null);
+    }).then(function (zip) {
+      progress(92);
+      toast("預けています…（" + mb(zip.size) + "）");
+      return Shelf.save(room, bundleName(), zip).then(function () { return zip; });
+    }).then(function (zip) {
+      progress(100);
+      remember("pushedAt", String(Date.now()));
+      toast("預けました（" + mb(zip.size) + "）");
+      if (after) after();
+    }).catch(function (e) { progress(100); toast(why(e), true); });
+  }
+
+  /* ドライブに預けてあるものの一覧 */
+  function listBundles() {
+    return Shelf.root().then(function (id) {
+      return Shelf.list(id).then(function (rows) {
+        return rows.filter(function (r) { return /^Rawpo_まるごと_.*\.zip$/.test(r.name); })
+          .sort(function (a, b) { return b.at - a.at; });
+      });
+    });
+  }
+
+  /* 戻す。いまあるものを消さず、足して合わせる */
+  function pullOne(row, after) {
+    progress(5);
+    toast("降ろしています…");
+    Shelf.get(row.fileId).then(function (blob) {
+      progress(40);
+      return restore(new File([blob], row.name, { type: "application/zip" }));
+    }).then(function () {
+      remember("pulledAt", String(Date.now()));
+      if (after) after();
+    }).catch(function (e) { progress(100); toast(why(e), true); });
+  }
+
+  function whenTxt(ms) {
+    if (!ms) return "まだありません";
+    var d = new Date(Number(ms));
+    return d.getFullYear() + "/" + pad2(d.getMonth() + 1) + "/" + pad2(d.getDate())
+      + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+
   function teamSheet() {
     function paintTeam() {
       var on = Shelf.linked();
       var body = on
         ? '<div class="linked"><b>つながっています</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
+          + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
+          + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
+          + '<div class="hintline">預けたものを見分けるための名前です。端末ごとに1つ預かります</div></div>'
+          + '<button class="rowbtn" id="tmPush"><div><b>ドライブに預ける</b>'
+          + "<span>いまのフォルダ・写真・メモをまるごと。前に預けたものと入れ替わります。"
+          + "最後に預けたのは " + whenTxt(recall("pushedAt")) + "</span></div>"
+          + '<svg><use href="#i-out"/></svg></button>'
+          + '<button class="rowbtn" id="tmPull"><div><b>ドライブから戻す</b>'
+          + "<span>別の端末で預けたものを、いまの中身に足します。消えるものはありません</span></div>"
+          + '<svg><use href="#i-plus"/></svg></button>'
+          + '<div id="tmList"></div>'
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
@@ -4455,17 +4566,17 @@
           + "<span>許可の画面が出ます。写真の置き場所として使います</span></div>"
           + '<svg><use href="#i-plus"/></svg></button>';
 
-      sheet('<div class="panel-head"><h3>チームで使う</h3>'
+      sheet('<div class="panel-head"><h3>Googleドライブと同期</h3>'
         + '<button class="iconbtn" id="tmClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
         + '<div class="panel-body"><div class="stack">'
-        + '<div class="hintline">フォルダを何人かで使うには、間に立つ置き場所が要ります。'
+        + '<div class="hintline">iPhone・パソコンで同じ中身にするには、間に立つ置き場所が要ります。'
         + "Rawpoは<b>あなた自身のGoogleドライブ</b>を使います。写真がRawpoのサーバーを通ることはありません。</div>"
         + body
         + '<div class="saveflag" id="tmSay"></div>'
         + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
         + "一緒に使いたい人が決まったら、その人のGmailを登録してください。</div>"
         + "</div></div>"
-        + '<div class="panel-foot"><span class="label">つないでいないフォルダは、これまで通り端末の中だけにあります</span></div>', "dialog");
+        + '<div class="panel-foot"><span class="label">預けていないものは、これまで通り端末の中だけにあります</span></div>', "dialog");
 
       $("tmClose").onclick = closeSheet;
       var say = function (t, bad) {
@@ -4482,6 +4593,50 @@
         }).catch(function (e) { say(why(e), true); });
       };
 
+      var dev = $("tmDev");
+      if (dev) dev.onchange = function () {
+        remember("devname", this.value.trim());
+        toast("この端末は「" + deviceName() + "」として預けます");
+      };
+
+      var push = $("tmPush");
+      if (push) push.onclick = function () {
+        if (dev) remember("devname", dev.value.trim());
+        pushAll(function () { teamSheet(); });
+      };
+
+      var pull = $("tmPull");
+      if (pull) pull.onclick = function () {
+        var box = $("tmList");
+        if (!box) return;
+        box.innerHTML = '<div class="saveflag">探しています…</div>';
+        listBundles().then(function (rows) {
+          if (!rows.length) {
+            box.innerHTML = '<div class="hintline">ドライブにはまだ何も預かっていません。'
+              + "別の端末で「ドライブに預ける」を押してから、もう一度ここを見てください。</div>";
+            return;
+          }
+          box.innerHTML = '<div class="label" style="margin-top:6px">預かっているもの</div>'
+            + rows.map(function (r, i) {
+              var who = r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "");
+              return '<button class="rowbtn" data-pull="' + i + '"><div><b>' + esc(who) + "</b>"
+                + "<span>" + whenTxt(r.at) + " ・ " + mb(r.size) + "</span></div>"
+                + '<svg><use href="#i-plus"/></svg></button>';
+            }).join("");
+          Array.prototype.forEach.call(box.querySelectorAll("[data-pull]"), function (b) {
+            b.onclick = function () {
+              var r = rows[Number(b.getAttribute("data-pull"))];
+              askYesNo({
+                title: "「" + r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "") + "」を戻す",
+                body: "いまこの端末にあるものは消えません。足りないものだけが足されます。"
+                  + "同じものが両方にあるときは、預けてあるほうで上書きされます。",
+                ok: "戻す"
+              }, function () { pullOne(r, function () { teamSheet(); }); });
+            };
+          });
+        }).catch(function (e) { box.innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>"; });
+      };
+
       var off = $("tmOff");
       if (off) off.onclick = function () {
         Shelf.unlink().then(function () { toast("つなぎを切りました"); paintTeam(); });
@@ -4491,7 +4646,7 @@
       if (t) t.onclick = function () {
         say("試しています…");
         var made = null;
-        Shelf.newRoom("つなぎの確認").then(function (id) {
+        Shelf.newRoom("Rawpo_つなぎの確認").then(function (id) {
           made = id;
           return Shelf.put(id, "test.txt", new Blob(["ok"], { type: "text/plain" }));
         }).then(function () {
@@ -4534,8 +4689,10 @@
       + "<span>" + esc(photoSize().name) + "・長辺" + photoSize().edge + "px"
       + (asksSize() ? "。取り込むたびにきく" : "。取り込むときはきかない") + "</span></div><svg><use href=\"#i-cam\"/></svg></button>"
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
-      + '<button class="rowbtn" id="sTeam"><div><b>チームで使う</b>'
-      + "<span>" + (Shelf.linked() ? "Googleドライブにつないであります" : "フォルダを何人かで使うための準備") + "</span></div>"
+      + '<button class="rowbtn" id="sTeam"><div><b>Googleドライブと同期</b>'
+      + "<span>" + (Shelf.linked()
+          ? ("つないであります。最後に預けたのは " + whenTxt(recall("pushedAt")))
+          : "別の端末と同じ中身にする。チームで使う準備にもなります") + "</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
       + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
