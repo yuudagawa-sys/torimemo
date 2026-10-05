@@ -941,6 +941,21 @@
     }).catch(function () {});
   }
 
+  /* 消した記録は、置いたままだと増える一方で、
+     同期のたびに送る分も重くなる。半年たったものは畳む。
+     どの端末も同じ日数で畳むので、食い違いは長くは続かない。
+     半年ぶりに開いた端末では消したものが戻ることがあるが、
+     そこまで間が空いていれば、戻ってきたほうが気づける */
+  var TOMB_KEEP = 180 * 24 * 60 * 60 * 1000;
+  function trimGone() {
+    var edge = Date.now() - TOMB_KEEP;
+    return DB.all("gone").then(function (rows) {
+      var old = (rows || []).filter(function (g) { return Number(g.upAt || 0) < edge; })
+        .map(function (g) { return ["gone", g.id]; });
+      return old.length ? DB.dropRaw(old, []) : null;
+    }).catch(function () {});
+  }
+
   /* テンプレートの置き場には、並び順の覚え書きも1件だけ混ざっている */
   function takeTemplates(rows) {
     var list = [], pref = null;
@@ -963,7 +978,7 @@
     syncViewToggle();
     wireDrop();
     paintShell();
-    migrateCats().then(stampOld).then(function () {
+    migrateCats().then(stampOld).then(trimGone).then(function () {
       return Promise.all([DB.all("exhibitions"), DB.all("templates")]);
     }).then(function (r) {
       exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
