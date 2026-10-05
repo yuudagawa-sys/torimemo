@@ -1805,15 +1805,37 @@
     node.classList.add("ghosted");
     grid.classList.add("reordering");
 
-    /* 画面のふちに寄せたら、ひとりでにスクロールする */
-    var edge = 0;
-    var tick = setInterval(function () { if (edge) window.scrollBy(0, edge); }, 16);
+    /* 画面のふちに寄せたら、ひとりでにスクロールする。
+       ふちは画面の端ではなく、上の帯の下と下の帯の上。
+       帯は居座っているので、画面の端で測るとその裏が当たり判定になり、
+       いくら寄せてもスクロールが始まらない */
+    var edge = 0, lastX = 0, lastY = 0;
+    function zone() {
+      var head = document.querySelector("header.top");
+      var dock = document.querySelector(".dock .tabbar") || document.querySelector(".dock");
+      var top = head ? head.getBoundingClientRect().bottom : 0;
+      var bot = dock ? dock.getBoundingClientRect().top : window.innerHeight;
+      if (!(bot > top + 80)) { top = 0; bot = window.innerHeight; }
+      return { top: top, bot: bot };
+    }
+    var tick = setInterval(function () {
+      if (!edge) return;
+      var was = window.scrollY;
+      window.scrollBy(0, edge);
+      /* 動いたぶんタイルもずれるので、指が止まっていても置き場所を見直す */
+      if (window.scrollY !== was) place(lastX, lastY);
+    }, 16);
 
     function place(x, y) {
+      lastX = x; lastY = y;
       ghost.style.left = x + "px";
       ghost.style.top = y + "px";
-      var h = window.innerHeight;
-      edge = y < 110 ? -9 : (y > h - 150 ? 9 : 0);
+
+      var z = zone(), band = 64;
+      /* ふちに食い込んだ深さで速さを変える。端ほど速い */
+      if (y < z.top + band) edge = -Math.ceil(Math.min(1, (z.top + band - y) / band) * 14);
+      else if (y > z.bot - band) edge = Math.ceil(Math.min(1, (y - (z.bot - band)) / band) * 14);
+      else edge = 0;
 
       /* いま指が乗っているタイルだけを見る。いちばん近いタイルを探す
          やり方だと、行き過ぎたときに隣の行を拾って、並びが行き来してしまう */
