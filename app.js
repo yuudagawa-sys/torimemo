@@ -4500,7 +4500,7 @@
      ここが通らないと先へ進めないので、同期を組む前に
      実機で確かめられるようにしてある。
      ============================================================ */
-  /* この端末の呼び名。預けたものを見分けるために使う */
+  /* この端末の呼び名。アップロードしたものを見分けるために使う */
   function deviceName() {
     var n = (recall("devname") || "").trim();
     if (n) return n;
@@ -4514,7 +4514,7 @@
   }
   function bundleName(dev) { return "Rawpo_まるごと_" + safeName(dev || deviceName()) + ".zip"; }
 
-  /* ドライブに預ける。端末ごとに1つだけ置き、押すたびに入れ替える */
+  /* ドライブにアップロードする。端末ごとに1つだけ置き、押すたびに入れ替える */
   function pushAll(after) {
     var room = null;
     toast("ドライブにつないでいます…");
@@ -4523,17 +4523,17 @@
       return makeBackup(null, null);
     }).then(function (zip) {
       progress(92);
-      toast("預けています…（" + mb(zip.size) + "）");
+      toast("アップロードしています…（" + mb(zip.size) + "）");
       return Shelf.save(room, bundleName(), zip).then(function () { return zip; });
     }).then(function (zip) {
       progress(100);
       remember("pushedAt", String(Date.now()));
-      toast("預けました（" + mb(zip.size) + "）");
+      toast("アップロードしました（" + mb(zip.size) + "）");
       if (after) after();
     }).catch(function (e) { progress(100); toast(why(e), true); });
   }
 
-  /* ドライブに預けてあるものの一覧 */
+  /* ドライブにあるものの一覧 */
   function listBundles() {
     return Shelf.root().then(function (id) {
       return Shelf.list(id).then(function (rows) {
@@ -4543,10 +4543,10 @@
     });
   }
 
-  /* 戻す。いまあるものを消さず、足して合わせる */
+  /* ダウンロードして取り込む。いまあるものを消さず、足して合わせる */
   function pullOne(row, after) {
     progress(5);
-    toast("降ろしています…");
+    toast("ダウンロードしています…");
     Shelf.get(row.fileId).then(function (blob) {
       progress(40);
       return restore(new File([blob], row.name, { type: "application/zip" }));
@@ -4571,15 +4571,19 @@
             + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
-          + '<div class="hintline">預けたものを見分けるための名前です。端末ごとに1つ預かります</div></div>'
-          + '<button class="rowbtn" id="tmPush"><div><b>ドライブに預ける</b>'
-          + "<span>いまのフォルダ・写真・メモをまるごと。前に預けたものと入れ替わります。"
-          + "最後に預けたのは " + whenTxt(recall("pushedAt")) + "</span></div>"
+          + '<div class="hintline">アップロードしたものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
+          + '<button class="rowbtn" id="tmPush"><div><b>ドライブにアップロード</b>'
+          + "<span>いまのフォルダ・写真・メモをまるごと。前にアップロードしたものと入れ替わります。"
+          + "最後にアップロードしたのは " + whenTxt(recall("pushedAt")) + "</span></div>"
+          + '<svg><use href="#i-up"/></svg></button>'
+          + '<button class="rowbtn" id="tmPull"><div><b>ドライブからダウンロード</b>'
+          + "<span>別の端末でアップロードしたものを、いまの中身に足します。消えるものはありません</span></div>"
           + '<svg><use href="#i-out"/></svg></button>'
-          + '<button class="rowbtn" id="tmPull"><div><b>ドライブから戻す</b>'
-          + "<span>別の端末で預けたものを、いまの中身に足します。消えるものはありません</span></div>"
-          + '<svg><use href="#i-plus"/></svg></button>'
           + '<div id="tmList"></div>'
+          /* ドライブのアプリでZIPは開けない。そこで迷わないよう、その場で断っておく */
+          + '<div class="hintline">ドライブに置いたファイルは<b>Rawpoがまとめた形</b>です。'
+          + "ドライブのアプリで開こうとすると「サポートされていないファイル形式です」と出ます。"
+          + "中身を見るときは、上の「ドライブからダウンロード」からこのアプリに戻してください。</div>"
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
@@ -4598,7 +4602,7 @@
         + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
         + "一緒に使いたい人が決まったら、その人のGmailを登録してください。</div>"
         + "</div></div>"
-        + '<div class="panel-foot"><span class="label">預けていないものは、これまで通り端末の中だけにあります</span></div>', "dialog");
+        + '<div class="panel-foot"><span class="label">アップロードしていないものは、これまで通りこの端末の中だけにあります</span></div>', "dialog");
 
       $("tmClose").onclick = closeSheet;
       var say = function (t, bad) {
@@ -4618,7 +4622,7 @@
       var dev = $("tmDev");
       if (dev) dev.onchange = function () {
         remember("devname", this.value.trim());
-        toast("この端末は「" + deviceName() + "」として預けます");
+        toast("この端末は「" + deviceName() + "」としてアップロードします");
       };
 
       var push = $("tmPush");
@@ -4634,25 +4638,25 @@
         box.innerHTML = '<div class="saveflag">探しています…</div>';
         listBundles().then(function (rows) {
           if (!rows.length) {
-            box.innerHTML = '<div class="hintline">ドライブにはまだ何も預かっていません。'
-              + "別の端末で「ドライブに預ける」を押してから、もう一度ここを見てください。</div>";
+            box.innerHTML = '<div class="hintline">ドライブにはまだ何もありません。'
+              + "別の端末で「ドライブにアップロード」を押してから、もう一度ここを見てください。</div>";
             return;
           }
-          box.innerHTML = '<div class="label" style="margin-top:6px">預かっているもの</div>'
+          box.innerHTML = '<div class="label" style="margin-top:6px">ドライブにあるもの</div>'
             + rows.map(function (r, i) {
               var who = r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "");
               return '<button class="rowbtn" data-pull="' + i + '"><div><b>' + esc(who) + "</b>"
                 + "<span>" + whenTxt(r.at) + " ・ " + mb(r.size) + "</span></div>"
-                + '<svg><use href="#i-plus"/></svg></button>';
+                + '<svg><use href="#i-out"/></svg></button>';
             }).join("");
           Array.prototype.forEach.call(box.querySelectorAll("[data-pull]"), function (b) {
             b.onclick = function () {
               var r = rows[Number(b.getAttribute("data-pull"))];
               askYesNo({
-                title: "「" + r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "") + "」を戻す",
+                title: "「" + r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "") + "」をダウンロード",
                 body: "いまこの端末にあるものは消えません。足りないものだけが足されます。"
-                  + "同じものが両方にあるときは、預けてあるほうで上書きされます。",
-                ok: "戻す"
+                  + "同じものが両方にあるときは、ドライブにあるほうで上書きされます。",
+                ok: "ダウンロード"
               }, function () { pullOne(r, function () { teamSheet(); }); });
             };
           });
@@ -4713,7 +4717,7 @@
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
       + '<button class="rowbtn" id="sTeam"><div><b>Googleドライブと同期</b>'
       + "<span>" + (Shelf.linked()
-          ? ("つないであります。最後に預けたのは " + whenTxt(recall("pushedAt")))
+          ? ("つないであります。最後にアップロードしたのは " + whenTxt(recall("pushedAt")))
           : "別の端末と同じ中身にする。チームで使う準備にもなります") + "</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
