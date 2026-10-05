@@ -69,8 +69,48 @@
   /* ============================================================
      保存庫（IndexedDB）
      ============================================================ */
+  /* ============================================================
+     同期のための下ごしらえ
+     二つの端末で同じものを触ったとき、どちらが新しいかを
+     決められないと合わせようがない。そこで記録のひとつひとつに
+     「いつ・どの端末で変えたか」を必ず持たせる。
+     ============================================================ */
+  /* 端末の見分け札。画面に出る呼び名と違い、こちらは変えない */
+  function devId() {
+    var v = recall("devid");
+    if (!v) {
+      v = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      remember("devid", v);
+    }
+    return v;
+  }
+
+  /* 時刻を持たせる置き場。blobs は中身が変わらないので要らない。
+     変わったかどうかは、それを指しているアイテムのほうで分かる */
+  var TRACKED = ["exhibitions", "items", "templates", "brands"];
+  function tracked(store) { return TRACKED.indexOf(store) >= 0; }
+
+  /* keep を立てると、すでに書いてある時刻をそのまま使う。
+     ドライブから降ろしたものを、降ろした時刻で塗り潰さないため */
+  function stamp(store, obj, keep) {
+    if (!obj || !tracked(store)) return obj;
+    if (keep) {
+      if (!obj.upAt) { obj.upAt = Date.now(); obj.upBy = obj.upBy || devId(); }
+      return obj;
+    }
+    obj.upAt = Date.now();
+    obj.upBy = devId();
+    return obj;
+  }
+
+  /* 消したという記録。これが無いと、消したことが相手に伝わらず、
+     次に合わせたときに消したはずのものが戻ってきてしまう */
+  function goneRec(store, id) {
+    return { id: store + "/" + id, store: store, rid: id, upAt: Date.now(), upBy: devId() };
+  }
+
   var DB = (function () {
-    var NAME = "expo-photo-note", VER = 2, dbp = null;
+    var NAME = "expo-photo-note", VER = 3, dbp = null;
 
     function open() {
       if (dbp) return dbp;
@@ -87,6 +127,7 @@
           }
           if (!d.objectStoreNames.contains("blobs")) d.createObjectStore("blobs", { keyPath: "id" });
           if (!d.objectStoreNames.contains("templates")) d.createObjectStore("templates", { keyPath: "id" });
+          if (!d.objectStoreNames.contains("gone")) d.createObjectStore("gone", { keyPath: "id" });
         };
         r.onsuccess = function () { res(r.result); };
         r.onerror = function () { rej(r.error); };
@@ -137,33 +178,55 @@
           return box;
         }).then(function (b) { return b.v; });
       },
+      /* 普通の保存。触った時刻を今に書き替える */
       put: function (store, obj) {
-        return run([store], "readwrite", function (t) { t.objectStore(store).put(obj); return obj; });
+        return run([store], "readwrite", function (t) { t.objectStore(store).put(stamp(store, obj)); return obj; });
       },
       putMany: function (pairs) {
         var names = [];
         pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
         return run(names, "readwrite", function (t) {
-          pairs.forEach(function (p) { t.objectStore(p[0]).put(p[1]); });
+          pairs.forEach(function (p) { t.objectStore(p[0]).put(stamp(p[0], p[1])); });
+        });
+      },
+      /* よそから降ろしたものを、書いてある時刻のまま入れる */
+      putRaw: function (store, obj) {
+        return run([store], "readwrite", function (t) { t.objectStore(store).put(stamp(store, obj, true)); return obj; });
+      },
+      putManyRaw: function (pairs) {
+        var names = [];
+        pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
+        if (!names.length) return Promise.resolve();
+        return run(names, "readwrite", function (t) {
+          pairs.forEach(function (p) { t.objectStore(p[0]).put(stamp(p[0], p[1], true)); });
         });
       },
       del: function (store, id) {
-        return run([store], "readwrite", function (t) { t.objectStore(store).delete(id); });
+        var names = tracked(store) ? [store, "gone"] : [store];
+        return run(names, "readwrite", function (t) {
+          t.objectStore(store).delete(id);
+          if (tracked(store)) t.objectStore("gone").put(goneRec(store, id));
+        });
       },
       delMany: function (pairs) {
         var names = [];
         pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
         if (!names.length) return Promise.resolve();
+        if (pairs.some(function (p) { return tracked(p[0]); })) names.push("gone");
         return run(names, "readwrite", function (t) {
-          pairs.forEach(function (p) { t.objectStore(p[0]).delete(p[1]); });
+          pairs.forEach(function (p) {
+            t.objectStore(p[0]).delete(p[1]);
+            if (tracked(p[0])) t.objectStore("gone").put(goneRec(p[0], p[1]));
+          });
         });
       },
       wipe: function () {
-        return run(["exhibitions", "brands", "items", "blobs"], "readwrite", function (t) {
+        return run(["exhibitions", "brands", "items", "blobs", "gone"], "readwrite", function (t) {
           t.objectStore("exhibitions").clear();
           t.objectStore("brands").clear();
           t.objectStore("items").clear();
           t.objectStore("blobs").clear();
+          t.objectStore("gone").clear();
         });
       }
     };
@@ -799,6 +862,28 @@
     }).catch(function () {});
   }
 
+  /* 前からある記録には時刻が無い。一度だけまとめて入れておく。
+     作った時刻が分かるものはそれを使う。そのほうが、
+     古いものが急に「今さっき変えた」顔をしないで済む */
+  function stampOld() {
+    if (recall("stamped") === "1") return Promise.resolve();
+    var base = Date.now(), me = devId();
+    return Promise.all(TRACKED.map(function (st) {
+      return DB.all(st).then(function (rows) {
+        var need = (rows || []).filter(function (r) { return !r.upAt; });
+        if (!need.length) return null;
+        need.forEach(function (r) {
+          var t = Number(r.createdAt) || Date.parse(r.createdAt || r.date || "") || base;
+          r.upAt = t;
+          r.upBy = me;
+        });
+        return DB.putManyRaw(need.map(function (r) { return [st, r]; }));
+      }, function () { return null; });
+    })).then(function () {
+      remember("stamped", "1");
+    }).catch(function () {});
+  }
+
   /* テンプレートの置き場には、並び順の覚え書きも1件だけ混ざっている */
   function takeTemplates(rows) {
     var list = [], pref = null;
@@ -821,7 +906,7 @@
     syncViewToggle();
     wireDrop();
     paintShell();
-    migrateCats().then(function () {
+    migrateCats().then(stampOld).then(function () {
       return Promise.all([DB.all("exhibitions"), DB.all("templates")]);
     }).then(function (r) {
       exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
@@ -4784,13 +4869,18 @@
   function makeBackup(exFilter, itFilter) {
     progress(3);
     toast("まとめています…");
-    var meta = { version: 2, madeAt: new Date().toISOString(), exhibitions: [], items: [], templates: [] };
+    var meta = { version: 3, madeAt: new Date().toISOString(), exhibitions: [], items: [], templates: [], gone: [] };
     var entries = [], blobIds = [];
 
-    return Promise.all([DB.all("exhibitions"), DB.all("items"), DB.all("templates")]).then(function (r) {
+    /* 一部だけ書き出すときは、消えた記録まで持ち出さない。
+       その相手に関係のない削除まで伝えてしまうため */
+    var whole = !exFilter && !itFilter;
+    return Promise.all([DB.all("exhibitions"), DB.all("items"), DB.all("templates"),
+      whole ? DB.all("gone") : Promise.resolve([])]).then(function (r) {
       meta.exhibitions = exFilter ? r[0].filter(exFilter) : r[0];
       meta.items = itFilter ? r[1].filter(itFilter) : r[1];
       meta.templates = r[2] || [];
+      meta.gone = r[3] || [];
       meta.items.forEach(function (it) {
         if (it.blobId && blobIds.indexOf(it.blobId) < 0) blobIds.push(it.blobId);
         if (it.thumbId && blobIds.indexOf(it.thumbId) < 0) blobIds.push(it.thumbId);
@@ -4846,7 +4936,9 @@
       });
 
       progress(60);
-      return DB.putMany(pairs).then(function () {
+      /* 書いてある時刻のまま入れる。ここで今の時刻に塗り替えると、
+         どちらが新しいか分からなくなる */
+      return DB.putManyRaw(pairs).then(function () {
         curEx = null; screen = "shelf"; curCat = "all";
         return Promise.all([DB.all("exhibitions"), DB.all("templates")]);
       }).then(function (r) {
