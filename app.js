@@ -376,7 +376,8 @@
        Shelf.link()      つなぐ（相手に許可画面が出る）
        Shelf.unlink()    つなぎを切る
        Shelf.who()       つないだ人の名前
-       Shelf.newRoom()   共有フォルダを1つ作る
+       Shelf.newRoom()   フォルダを1つ作る
+       Shelf.room()      中にフォルダを1つ。あれば作らず、その番号を返す
        Shelf.put()       1件置く
        Shelf.get()       1件取る
        Shelf.list()      中に何があるか
@@ -518,6 +519,24 @@
       }).catch(function () { remember("driveRoot", ""); return fresh(); });
     },
 
+    /* 中にフォルダを1つ。すでにあれば作らない。
+       押すたびに同じ名前のフォルダが並んでいかないように */
+    room: function (parentId, name) {
+      var q = encodeURIComponent("'" + parentId + "' in parents and mimeType='application/vnd.google-apps.folder'"
+        + " and name='" + String(name).replace(/'/g, "\\'") + "' and trashed=false");
+      return gCall(DRIVE + "?q=" + q + "&fields=files(id)&pageSize=10").then(function (r) {
+        if (r.files && r.files.length) return r.files[0].id;
+        return gCall(DRIVE + "?fields=id", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name, parents: [parentId],
+            mimeType: "application/vnd.google-apps.folder"
+          })
+        }).then(function (x) { return x.id; });
+      });
+    },
+
     /* 同じ名前のものを探す。あれば入れ替え、無ければ置く。
        押すたびに増えていかないように */
     find: function (roomId, name) {
@@ -558,19 +577,27 @@
       });
     },
 
+    /* 中にあるものを並べる。1000件で切れるので、続きがあれば追う。
+       写真はすぐ1000件を超えるため、ここで止まると取りこぼす */
     list: function (roomId) {
-      var q = encodeURIComponent("'" + roomId + "' in parents and trashed=false");
-      var f = encodeURIComponent("files(id,name,size,modifiedTime,lastModifyingUser/displayName)");
-      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=1000")
-        .then(function (r) {
-          return (r.files || []).map(function (x) {
-            return {
+      var out = [];
+      function page(tok) {
+        var q = encodeURIComponent("'" + roomId + "' in parents and trashed=false");
+        var f = encodeURIComponent("nextPageToken,files(id,name,size,modifiedTime,lastModifyingUser/displayName)");
+        return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=1000"
+          + (tok ? "&pageToken=" + encodeURIComponent(tok) : "")).then(function (r) {
+          (r.files || []).forEach(function (x) {
+            out.push({
               fileId: x.id, name: x.name, size: Number(x.size || 0),
               at: Date.parse(x.modifiedTime || 0) || 0,
               by: (x.lastModifyingUser && x.lastModifyingUser.displayName) || ""
-            };
+            });
           });
+          if (r.nextPageToken) return page(r.nextPageToken);
+          return out;
         });
+      }
+      return page(null);
     },
 
     drop: function (fileId) {
@@ -4608,12 +4635,124 @@
       return makeBackup(null, null);
     }).then(function (zip) {
       progress(92);
-      toast("アップロードしています…（" + mb(zip.size) + "）");
+      toast("保存しています…（" + mb(zip.size) + "）");
       return Shelf.save(room, bundleName(), zip).then(function () { return zip; });
     }).then(function (zip) {
       progress(100);
       remember("pushedAt", String(Date.now()));
-      toast("アップロードしました（" + mb(zip.size) + "）");
+      toast("保存しました（" + mb(zip.size) + "）");
+      if (after) after();
+    }).catch(function (e) { progress(100); toast(why(e), true); });
+  }
+
+  /* ============================================================
+     変わったものだけ送る（自動でそろえる・第2段階）
+     ------------------------------------------------------------
+     まるごとZIPは「セーブデータ」として残し、こちらを普段づかいにする。
+     ドライブの中はこうなる。
+
+       Rawpo/
+         Rawpo_まるごと_端末名.zip   ← 手で作るセーブデータ
+         同期/
+           端末の札.json             ← その端末が知っていること（記録だけ）
+           中身/
+             blobの番号              ← 写真・録音・書類の実体。1件1ファイル
+
+     記録は軽いので毎回まるごと置き替える。重いのは写真で、
+     こちらは一度上げたら中身が変わらないから、
+     ドライブに無いものだけを上げる。これが「変わったものだけ」の中身。
+
+     端末ごとに別のファイルに書くので、二台が同時に送ってもぶつからない。
+     突き合わせは、降ろすとき（第3段階）にやる。
+     ============================================================ */
+  var syncRooms = null;   /* 置き場の番号。一度引いたら使い回す */
+  function syncPlace() {
+    if (syncRooms) return Promise.resolve(syncRooms);
+    return Shelf.root().then(function (root) {
+      return Shelf.room(root, "同期").then(function (sync) {
+        return Shelf.room(sync, "中身").then(function (parts) {
+          syncRooms = { root: root, sync: sync, parts: parts };
+          return syncRooms;
+        });
+      });
+    });
+  }
+  function myIndexName() { return devId() + ".json"; }
+
+  /* この端末が持っている記録。写真そのものは入らない */
+  function myRecords() {
+    return Promise.all([DB.all("exhibitions"), DB.all("items"),
+      DB.all("templates"), DB.all("gone")]).then(function (r) {
+      return { exhibitions: r[0] || [], items: r[1] || [], templates: r[2] || [], gone: r[3] || [] };
+    });
+  }
+
+  /* いちばん新しい更新時刻。前に送ったときと同じなら、送るものは無い */
+  function newestAt(rec) {
+    var m = 0;
+    ["exhibitions", "items", "templates", "gone"].forEach(function (k) {
+      (rec[k] || []).forEach(function (x) { if (Number(x.upAt) > m) m = Number(x.upAt); });
+    });
+    return m;
+  }
+
+  /* 記録が指している、写真・録音・書類の番号 */
+  function partIds(items) {
+    var seen = {}, out = [];
+    (items || []).forEach(function (it) {
+      [it.blobId, it.thumbId, it.origId].forEach(function (id) {
+        if (id && !seen[id]) { seen[id] = 1; out.push(id); }
+      });
+    });
+    return out;
+  }
+
+  function sendChanges(after) {
+    var place = null, rec = null, need = [], sent = 0, changed = false;
+    progress(4);
+    toast("ドライブに接続しています…");
+    syncPlace().then(function (p) {
+      place = p;
+      return myRecords();
+    }).then(function (r) {
+      rec = r;
+      changed = newestAt(rec) > Number(recall("sentUpTo") || 0);
+      progress(12);
+      return Shelf.list(place.parts);
+    }).then(function (rows) {
+      var there = {};
+      rows.forEach(function (f) { there[f.name] = 1; });
+      need = partIds(rec.items).filter(function (id) { return !there[id]; });
+      if (!changed && !need.length) return "same";
+      if (!need.length) return null;
+      toast("写真を送っています…（" + need.length + "件）");
+      var i = 0;
+      return (function next() {
+        if (i >= need.length) return Promise.resolve(null);
+        var id = need[i++];
+        progress(12 + Math.round((i / need.length) * 76));
+        return DB.get("blobs", id).then(function (b) {
+          if (!b || !b.blob) return null;
+          return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
+        }).catch(function () { return null; }).then(next);
+      })();
+    }).then(function (how) {
+      if (how === "same") return "same";
+      progress(92);
+      toast("記録を送っています…");
+      var body = JSON.stringify({
+        v: 1, dev: devId(), name: deviceName(), at: Date.now(),
+        exhibitions: rec.exhibitions, items: rec.items,
+        templates: rec.templates, gone: rec.gone
+      });
+      return Shelf.save(place.sync, myIndexName(),
+        new Blob([body], { type: "application/json" })).then(function () { return null; });
+    }).then(function (how) {
+      progress(100);
+      if (how === "same") { toast("変わったものはありませんでした"); if (after) after(); return; }
+      remember("sentAt", String(Date.now()));
+      remember("sentUpTo", String(newestAt(rec)));
+      toast(sent ? ("送りました（写真 " + sent + "件）") : "送りました（記録だけ）");
       if (after) after();
     }).catch(function (e) { progress(100); toast(why(e), true); });
   }
@@ -4656,19 +4795,20 @@
             + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
-          + '<div class="hintline">アップロードしたものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
-          + '<button class="rowbtn" id="tmPush"><div><b>ドライブにアップロード</b>'
-          + "<span>いまのフォルダ・写真・メモをまるごと。前にアップロードしたものと入れ替わります。"
-          + "最後にアップロードしたのは " + whenTxt(recall("pushedAt")) + "</span></div>"
+          + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
+          + '<button class="rowbtn" id="tmSend"><div><b>変わったものを送る</b>'
+          + "<span>前に送ってから足した・直したものだけを送ります。写真は一度送れば二度は送りません。"
+          + "最後に送ったのは " + whenTxt(recall("sentAt")) + "</span></div>"
           + '<svg><use href="#i-up"/></svg></button>'
-          + '<button class="rowbtn" id="tmPull"><div><b>ドライブからダウンロード</b>'
-          + "<span>別の端末でアップロードしたものを、いまの中身に足します。消えるものはありません</span></div>"
+          + '<div class="label" style="margin-top:10px">セーブデータ</div>'
+          + '<button class="rowbtn" id="tmPush"><div><b>まるごと保存</b>'
+          + "<span>いまのフォルダ・写真・メモをひとまとめに。前の保存と入れ替わります。"
+          + "最後に保存したのは " + whenTxt(recall("pushedAt")) + "</span></div>"
+          + '<svg><use href="#i-up"/></svg></button>'
+          + '<button class="rowbtn" id="tmPull"><div><b>保存から戻す</b>'
+          + "<span>保存したところまで戻します。いまの中身は消えません</span></div>"
           + '<svg><use href="#i-out"/></svg></button>'
           + '<div id="tmList"></div>'
-          /* ドライブのアプリでZIPは開けない。そこで迷わないよう、その場で断っておく */
-          + '<div class="hintline">ドライブに置いたファイルは<b>Rawpoがまとめた形</b>です。'
-          + "ドライブのアプリで開こうとすると「サポートされていないファイル形式です」と出ます。"
-          + "中身を見るときは、上の「ドライブからダウンロード」からこのアプリに戻してください。</div>"
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
@@ -4687,7 +4827,7 @@
         + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
         + "一緒に使いたい人が決まったら、その人のGmailを登録してください。</div>"
         + "</div></div>"
-        + '<div class="panel-foot"><span class="label">アップロードしていないものは、これまで通りこの端末の中だけにあります</span></div>', "dialog");
+        + '<div class="panel-foot"><span class="label">送っていないものは、これまで通りこの端末の中だけにあります</span></div>', "dialog");
 
       $("tmClose").onclick = closeSheet;
       var say = function (t, bad) {
@@ -4707,7 +4847,13 @@
       var dev = $("tmDev");
       if (dev) dev.onchange = function () {
         remember("devname", this.value.trim());
-        toast("この端末は「" + deviceName() + "」としてアップロードします");
+        toast("この端末は「" + deviceName() + "」として送ります");
+      };
+
+      var send = $("tmSend");
+      if (send) send.onclick = function () {
+        if (dev) remember("devname", dev.value.trim());
+        sendChanges(function () { teamSheet(); });
       };
 
       var push = $("tmPush");
@@ -4723,11 +4869,11 @@
         box.innerHTML = '<div class="saveflag">探しています…</div>';
         listBundles().then(function (rows) {
           if (!rows.length) {
-            box.innerHTML = '<div class="hintline">ドライブにはまだ何もありません。'
-              + "別の端末で「ドライブにアップロード」を押してから、もう一度ここを見てください。</div>";
+            box.innerHTML = '<div class="hintline">まだ保存がありません。'
+              + "「まるごと保存」を押してから、もう一度ここを見てください。</div>";
             return;
           }
-          box.innerHTML = '<div class="label" style="margin-top:6px">ドライブにあるもの</div>'
+          box.innerHTML = '<div class="label" style="margin-top:6px">ドライブにある保存</div>'
             + rows.map(function (r, i) {
               var who = r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "");
               return '<button class="rowbtn" data-pull="' + i + '"><div><b>' + esc(who) + "</b>"
@@ -4738,10 +4884,10 @@
             b.onclick = function () {
               var r = rows[Number(b.getAttribute("data-pull"))];
               askYesNo({
-                title: "「" + r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "") + "」をダウンロード",
+                title: "「" + r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "") + "」から戻す",
                 body: "いまこの端末にあるものは消えません。足りないものだけが足されます。"
                   + "同じものが両方にあるときは、ドライブにあるほうで上書きされます。",
-                ok: "ダウンロード"
+                ok: "戻す"
               }, function () { pullOne(r, function () { teamSheet(); }); });
             };
           });
@@ -4802,7 +4948,7 @@
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
       + '<button class="rowbtn" id="sTeam"><div><b>Googleドライブと同期</b>'
       + "<span>" + (Shelf.linked()
-          ? ("接続済み。最後にアップロードしたのは " + whenTxt(recall("pushedAt")))
+          ? ("接続済み。最後に送ったのは " + whenTxt(recall("sentAt")))
           : "別の端末と同じ中身にする。チームで使う準備にもなります") + "</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
