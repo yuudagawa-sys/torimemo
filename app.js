@@ -341,7 +341,7 @@
       s.src = "https://accounts.google.com/gsi/client";
       s.async = true;
       s.onload = function () { ok(); };
-      s.onerror = function () { ng(new Error("Googleにつながりませんでした。通信を確かめてください。")); };
+      s.onerror = function () { ng(new Error("Googleに接続できませんでした。通信を確かめてください。")); };
       document.head.appendChild(s);
     });
   }
@@ -384,7 +384,7 @@
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
-        throw new Error("Googleとのつなぎが切れました。もう一度つないでください。");
+        throw new Error("Googleとの接続が切れました。もう一度接続してください。");
       }
       if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
       return r.status === 204 ? null : r.json();
@@ -4517,7 +4517,7 @@
   /* ドライブにアップロードする。端末ごとに1つだけ置き、押すたびに入れ替える */
   function pushAll(after) {
     var room = null;
-    toast("ドライブにつないでいます…");
+    toast("ドライブに接続しています…");
     Shelf.root().then(function (id) {
       room = id;
       return makeBackup(null, null);
@@ -4567,7 +4567,7 @@
     function paintTeam() {
       var on = Shelf.linked();
       var body = on
-        ? '<div class="linked"><b>つながっています</b><span>'
+        ? '<div class="linked"><b>接続済み</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
@@ -4587,8 +4587,8 @@
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
-          + '<button class="danger" id="tmOff">つなぎを切る</button>'
-        : '<button class="rowbtn" id="tmOn"><div><b>Googleドライブにつなぐ</b>'
+          + '<button class="danger" id="tmOff">接続を解除</button>'
+        : '<button class="rowbtn" id="tmOn"><div><b>Googleドライブに接続</b>'
           + "<span>許可の画面が出ます。写真の置き場所として使います</span></div>"
           + '<svg><use href="#i-plus"/></svg></button>';
 
@@ -4614,7 +4614,7 @@
       if (on1) on1.onclick = function () {
         say("Googleの画面を開いています…");
         Shelf.link().then(function () {
-          toast("つながりました");
+          toast("接続しました");
           paintTeam();
         }).catch(function (e) { say(why(e), true); });
       };
@@ -4665,14 +4665,14 @@
 
       var off = $("tmOff");
       if (off) off.onclick = function () {
-        Shelf.unlink().then(function () { toast("つなぎを切りました"); paintTeam(); });
+        Shelf.unlink().then(function () { toast("接続を解除しました"); paintTeam(); });
       };
 
       var t = $("tmTest");
       if (t) t.onclick = function () {
         say("試しています…");
         var made = null;
-        Shelf.newRoom("Rawpo_つなぎの確認").then(function (id) {
+        Shelf.newRoom("Rawpo_接続の確認").then(function (id) {
           made = id;
           return Shelf.put(id, "test.txt", new Blob(["ok"], { type: "text/plain" }));
         }).then(function () {
@@ -4717,7 +4717,7 @@
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
       + '<button class="rowbtn" id="sTeam"><div><b>Googleドライブと同期</b>'
       + "<span>" + (Shelf.linked()
-          ? ("つないであります。最後にアップロードしたのは " + whenTxt(recall("pushedAt")))
+          ? ("接続済み。最後にアップロードしたのは " + whenTxt(recall("pushedAt")))
           : "別の端末と同じ中身にする。チームで使う準備にもなります") + "</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
