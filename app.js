@@ -170,6 +170,18 @@
           return out;
         });
       },
+      /* 番号だけを読む。写真の実体まで読み出すと、
+         どれが要るか調べるだけで端末の記憶があふれる */
+      keys: function (store) {
+        var out = [];
+        return run([store], "readonly", function (t) {
+          t.objectStore(store).openKeyCursor().onsuccess = function (e) {
+            var c = e.target.result;
+            if (c) { out.push(c.key); c.continue(); }
+          };
+          return out;
+        });
+      },
       get: function (store, id) {
         var box = {};
         return run([store], "readonly", function (t) {
@@ -178,15 +190,22 @@
           return box;
         }).then(function (b) { return b.v; });
       },
-      /* 普通の保存。触った時刻を今に書き替える */
+      /* 普通の保存。触った時刻を今に書き替え、
+         「まだ送っていないものがある」と自動同期に知らせる。
+         降ろしてきたものを入れる putRaw では知らせない。
+         知らせると、受け取るたびに送り返して止まらなくなる */
       put: function (store, obj) {
-        return run([store], "readwrite", function (t) { t.objectStore(store).put(stamp(store, obj)); return obj; });
+        return run([store], "readwrite", function (t) { t.objectStore(store).put(stamp(store, obj)); return obj; })
+          .then(function (r) { if (tracked(store)) touched(); return r; });
       },
       putMany: function (pairs) {
         var names = [];
         pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
         return run(names, "readwrite", function (t) {
           pairs.forEach(function (p) { t.objectStore(p[0]).put(stamp(p[0], p[1])); });
+        }).then(function (r) {
+          if (pairs.some(function (p) { return tracked(p[0]); })) touched();
+          return r;
         });
       },
       /* よそから降ろしたものを、書いてある時刻のまま入れる */
@@ -206,18 +225,29 @@
         return run(names, "readwrite", function (t) {
           t.objectStore(store).delete(id);
           if (tracked(store)) t.objectStore("gone").put(goneRec(store, id));
-        });
+        }).then(function (r) { if (tracked(store)) touched(); return r; });
       },
       delMany: function (pairs) {
         var names = [];
         pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
         if (!names.length) return Promise.resolve();
-        if (pairs.some(function (p) { return tracked(p[0]); })) names.push("gone");
+        var any = pairs.some(function (p) { return tracked(p[0]); });
+        if (any) names.push("gone");
         return run(names, "readwrite", function (t) {
           pairs.forEach(function (p) {
             t.objectStore(p[0]).delete(p[1]);
             if (tracked(p[0])) t.objectStore("gone").put(goneRec(p[0], p[1]));
           });
+        }).then(function (r) { if (any) touched(); return r; });
+      },
+      /* よそから届いた「消した」を、その時刻のまま効かせる。
+         ここで今の時刻を打つと、消した順番が狂う */
+      dropRaw: function (pairs, tombs) {
+        var names = ["gone"];
+        pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
+        return run(names, "readwrite", function (t) {
+          pairs.forEach(function (p) { t.objectStore(p[0]).delete(p[1]); });
+          (tombs || []).forEach(function (g) { t.objectStore("gone").put(g); });
         });
       },
       wipe: function () {
@@ -948,9 +978,17 @@
       loadSkin();
       gauge();
       askPersist();
+      /* 画面が出てからにする。開いた瞬間に通信を始めると、
+         最初の描画がもたつく */
+      setTimeout(maybeSync, 2500);
     }).catch(function (e) {
       booted = true;
       $("stage").innerHTML = '<div class="blank"><h2>データを開けませんでした</h2><p>' + esc(why(e)) + "</p></div>";
+    });
+
+    /* ほかのアプリから戻ってきたとき。別の端末で触っていた分を拾う */
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) setTimeout(maybeSync, 800);
     });
 
     if ("serviceWorker" in navigator) {
@@ -4665,6 +4703,22 @@
      端末ごとに別のファイルに書くので、二台が同時に送ってもぶつからない。
      突き合わせは、降ろすとき（第3段階）にやる。
      ============================================================ */
+  /* 自動で走っているときは、途中経過を出さない。
+     何もしていないのに画面がしゃべり出すと落ち着かない。
+     ただし、うまくいかなかったときだけは必ず出す */
+  var quietSync = false, syncing = false;
+  function stoast(t, bad) { if (bad || !quietSync) toast(t, bad); }
+
+  /* まだ送っていないものがあるか。書き込みのたびに立つ */
+  var unsent = false, touchTimer = null;
+  function touched() {
+    unsent = true;
+    if (!Shelf.linked() || !autoSyncOn()) return;
+    /* 連打のたびに通信しない。手が止まってから送る */
+    clearTimeout(touchTimer);
+    touchTimer = setTimeout(function () { maybeSync(); }, 20000);
+  }
+
   var syncRooms = null;   /* 置き場の番号。一度引いたら使い回す */
   function syncPlace() {
     if (syncRooms) return Promise.resolve(syncRooms);
@@ -4707,17 +4761,17 @@
     return out;
   }
 
-  function sendChanges(after) {
+  function sendChanges() {
     var place = null, rec = null, need = [], sent = 0, changed = false;
     progress(4);
-    toast("ドライブに接続しています…");
-    syncPlace().then(function (p) {
+    stoast("ドライブに接続しています…");
+    return syncPlace().then(function (p) {
       place = p;
       return myRecords();
     }).then(function (r) {
       rec = r;
       changed = newestAt(rec) > Number(recall("sentUpTo") || 0);
-      progress(12);
+      progress(8);
       return Shelf.list(place.parts);
     }).then(function (rows) {
       var there = {};
@@ -4725,12 +4779,12 @@
       need = partIds(rec.items).filter(function (id) { return !there[id]; });
       if (!changed && !need.length) return "same";
       if (!need.length) return null;
-      toast("写真を送っています…（" + need.length + "件）");
+      stoast("写真を送っています…（" + need.length + "件）");
       var i = 0;
       return (function next() {
         if (i >= need.length) return Promise.resolve(null);
         var id = need[i++];
-        progress(12 + Math.round((i / need.length) * 76));
+        progress(8 + Math.round((i / need.length) * 36));
         return DB.get("blobs", id).then(function (b) {
           if (!b || !b.blob) return null;
           return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
@@ -4738,8 +4792,8 @@
       })();
     }).then(function (how) {
       if (how === "same") return "same";
-      progress(92);
-      toast("記録を送っています…");
+      progress(46);
+      stoast("記録を送っています…");
       var body = JSON.stringify({
         v: 1, dev: devId(), name: deviceName(), at: Date.now(),
         exhibitions: rec.exhibitions, items: rec.items,
@@ -4748,13 +4802,218 @@
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () { return null; });
     }).then(function (how) {
-      progress(100);
-      if (how === "same") { toast("変わったものはありませんでした"); if (after) after(); return; }
+      if (how === "same") return { same: true, sent: 0 };
       remember("sentAt", String(Date.now()));
       remember("sentUpTo", String(newestAt(rec)));
-      toast(sent ? ("送りました（写真 " + sent + "件）") : "送りました（記録だけ）");
+      return { same: false, sent: sent };
+    });
+  }
+
+  /* ============================================================
+     向こうの変わりを降ろす（第3段階）と、消えたものを合わせる（第4段階）
+     ------------------------------------------------------------
+     突き合わせの決まりは二つだけ。
+
+       ・同じものが両方にあるなら、あとで触ったほうを採る
+       ・「消した」という記録が、その記録より新しければ、消えたままにする
+
+     逆に、消したあとに別の端末で直してあれば、そちらが新しいので残る。
+     どちらも時刻の比べ合いなので、迷うところがない。
+     ============================================================ */
+  var SYNCED = ["exhibitions", "items", "templates"];
+
+  /* 画面の持ちものを、いまのデータベースから作り直す */
+  function reloadAll() {
+    curEx = null; screen = "shelf"; curCat = "all";
+    return Promise.all([DB.all("exhibitions"), DB.all("templates")]).then(function (r) {
+      exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
+      takeTemplates(r[1]);
+      remember("ex", "");
+      return DB.all("items");
+    }).then(function (all) { browseAll = all; }, function () { browseAll = []; })
+      .then(function () { return goShelf(); });
+  }
+
+  /* 届いた記録を、いまの中身に合わせる。写真の取り寄せまでやる */
+  function applyIndexes(list, place) {
+    var out = { add: 0, upd: 0, del: 0, got: 0 };
+    var mine = {}, kept = null, lost = [];
+    return myRecords().then(function (here) {
+      SYNCED.forEach(function (st) {
+        mine[st] = {};
+        (here[st] || []).forEach(function (r) { mine[st][r.id] = r; });
+      });
+
+      /* 「消した」は、こちらとあちらで新しいほうを残す */
+      var tomb = {};
+      function noteTomb(g) {
+        if (!g || !g.store || !g.rid) return;
+        var k = g.store + "/" + g.rid;
+        if (!tomb[k] || Number(g.upAt) > Number(tomb[k].upAt)) tomb[k] = g;
+      }
+      (here.gone || []).forEach(noteTomb);
+      list.forEach(function (ix) { (ix.gone || []).forEach(noteTomb); });
+
+      var puts = [], kills = [], tombs = [];
+
+      /* 1. 向こうにしか無いもの、向こうのほうが新しいものを採る */
+      list.forEach(function (ix) {
+        SYNCED.forEach(function (st) {
+          (ix[st] || []).forEach(function (r) {
+            if (!r || !r.id) return;
+            var t = tomb[st + "/" + r.id];
+            /* 消したあとの古い記録は、戻さない */
+            if (t && Number(t.upAt) >= Number(r.upAt || 0)) return;
+            var cur = mine[st][r.id];
+            if (!cur) { mine[st][r.id] = r; puts.push([st, r]); out.add++; return; }
+            if (Number(r.upAt || 0) > Number(cur.upAt || 0)) {
+              mine[st][r.id] = r; puts.push([st, r]); out.upd++;
+            }
+          });
+        });
+      });
+
+      /* 2. 向こうで消されたものを、こちらでも消す */
+      Object.keys(tomb).forEach(function (k) {
+        var g = tomb[k];
+        tombs.push(g);
+        var cur = mine[g.store] && mine[g.store][g.rid];
+        if (!cur) return;
+        /* 消したあとに直してあれば、そちらが新しいので残す */
+        if (Number(g.upAt) <= Number(cur.upAt || 0)) return;
+        kills.push([g.store, g.rid]);
+        if (g.store === "items") lost.push(cur);
+        delete mine[g.store][g.rid];
+        out.del++;
+      });
+
+      kept = Object.keys(mine.items).map(function (k) { return mine.items[k]; });
+      progress(70);
+      return DB.putManyRaw(puts.concat(tombs.map(function (g) { return ["gone", g]; })))
+        .then(function () { return kills.length ? DB.dropRaw(kills, []) : null; });
+    }).then(function () {
+      /* 消えたものだけが指していた写真は、置いておいても使い道がない。
+         ほかの記録がまだ指しているものは残す */
+      if (!lost.length) return null;
+      var alive = {};
+      partIds(kept).forEach(function (id) { alive[id] = 1; });
+      var drop = partIds(lost).filter(function (id) { return !alive[id]; })
+        .map(function (id) { return ["blobs", id]; });
+      return drop.length ? DB.dropRaw(drop, []) : null;
+    }).then(function () {
+      progress(74);
+      /* 3. 足りない写真・録音・書類を取り寄せる */
+      var want = partIds(kept);
+      return DB.keys("blobs").then(function (have) {
+        var box = {};
+        have.forEach(function (k) { box[k] = 1; });
+        return want.filter(function (id) { return !box[id]; });
+      });
+    }).then(function (need) {
+      if (!need.length) return null;
+      stoast("写真を取り寄せています…（" + need.length + "件）");
+      /* 名前から番号を引けるようにしておく。1件ずつ探すと何度も往復する */
+      var type = {};
+      kept.forEach(function (it) {
+        if (it.blobId) type[it.blobId] = it.mime || "application/octet-stream";
+        if (it.thumbId) type[it.thumbId] = "image/jpeg";
+        if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
+      });
+      return Shelf.list(place.parts).then(function (rows) {
+        var at = {};
+        rows.forEach(function (f) { at[f.name] = f.fileId; });
+        var i = 0;
+        return (function next() {
+          if (i >= need.length) return Promise.resolve(null);
+          var id = need[i++];
+          progress(74 + Math.round((i / need.length) * 22));
+          if (!at[id]) return Promise.resolve().then(next);
+          return Shelf.get(at[id]).then(function (b) {
+            return DB.putRaw("blobs", { id: id, blob: new Blob([b], { type: type[id] || b.type }) });
+          }).then(function () { out.got++; }).catch(function () {}).then(next);
+        })();
+      });
+    }).then(function () {
+      return out;
+    });
+  }
+
+  function takeChanges() {
+    var place = null, mine = myIndexName();
+    progress(50);
+    return syncPlace().then(function (p) {
+      place = p;
+      return Shelf.list(p.sync);
+    }).then(function (rows) {
+      var others = rows.filter(function (f) {
+        return /\.json$/.test(f.name) && f.name !== mine;
+      });
+      if (!others.length) return null;
+      progress(56);
+      stoast("ほかの端末の記録を読んでいます…（" + others.length + "台）");
+      var box = [], i = 0;
+      return (function next() {
+        if (i >= others.length) return Promise.resolve(box);
+        var f = others[i++];
+        progress(56 + Math.round((i / others.length) * 10));
+        return Shelf.get(f.fileId).then(function (b) { return b.text(); })
+          .then(function (t) { try { box.push(JSON.parse(t)); } catch (e) {} })
+          .catch(function () {}).then(next);
+      })();
+    }).then(function (box) {
+      if (!box || !box.length) return "none";
+      return applyIndexes(box, place);
+    }).then(function (out) {
+      if (out === "none") return { none: true, add: 0, upd: 0, del: 0, got: 0 };
+      remember("tookAt", String(Date.now()));
+      return reloadAll().then(function () { return out; });
+    });
+  }
+
+  /* 送ってから受け取る。順番が逆だと、こちらの新しい分が
+     向こうの古い記録で上書きされたように見えてしまう。
+     終わったあとの知らせは、送りと受けをまとめて1つにする。
+     別々に出すと、最後の1つしか目に入らない */
+  function syncNow(after, quiet) {
+    if (syncing) return;
+    syncing = true;
+    quietSync = !!quiet;
+    var up = null;
+    sendChanges().then(function (a) {
+      up = a;
+      return takeChanges();
+    }).then(function (down) {
+      progress(100);
+      remember("syncAt", String(Date.now()));
+      var said = [];
+      if (up.sent) said.push("写真 " + up.sent + "件を送りました");
+      else if (!up.same) said.push("記録を送りました");
+      if (down.add) said.push("新しく " + down.add + "件");
+      if (down.upd) said.push("直し " + down.upd + "件");
+      if (down.del) said.push("消し " + down.del + "件");
+      if (said.length) toast("同期しました（" + said.join(" ・ ") + "）");
+      else if (!quietSync) toast("変わったものはありませんでした");
+      unsent = false;
+      syncing = false; quietSync = false;
       if (after) after();
-    }).catch(function (e) { progress(100); toast(why(e), true); });
+    }).catch(function (e) {
+      progress(100);
+      syncing = false; quietSync = false;
+      toast(why(e), true);
+    });
+  }
+
+  /* 押さなくても合っている、が目当てなので、開いたときと、
+     ほかのことをして戻ってきたときに、そっと走らせる。
+     立て続けに動かないよう、前からしばらく空いているときだけ */
+  var AUTO_GAP = 5 * 60 * 1000;
+  function autoSyncOn() { return recall("autosync") !== "0"; }
+  function maybeSync() {
+    if (syncing || !Shelf.linked() || !autoSyncOn()) return;
+    /* まだ送っていないものがあるときは、間を空けずに走らせる。
+       撮ったものがいつまでも向こうに出てこないと、同期の意味がない */
+    if (!unsent && Date.now() - Number(recall("syncAt") || 0) < AUTO_GAP) return;
+    syncNow(null, true);
   }
 
   /* ドライブにあるものの一覧 */
@@ -4796,10 +5055,14 @@
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
-          + '<button class="rowbtn" id="tmSend"><div><b>変わったものを送る</b>'
-          + "<span>前に送ってから足した・直したものだけを送ります。写真は一度送れば二度は送りません。"
-          + "最後に送ったのは " + whenTxt(recall("sentAt")) + "</span></div>"
-          + '<svg><use href="#i-up"/></svg></button>'
+          + '<button class="rowbtn" id="tmSync"><div><b>いますぐ同期</b>'
+          + "<span>変わったものを送り、ほかの端末の変わりを受け取ります。"
+          + "写真は一度送れば二度は送りません。"
+          + "最後に同期したのは " + whenTxt(recall("syncAt")) + "</span></div>"
+          + '<svg><use href="#i-sync"/></svg></button>'
+          + '<label class="rowbtn" for="tmAuto" style="cursor:pointer"><div><b>開いたときに自動で同期</b>'
+          + "<span>ほかのことをして戻ってきたときも、そっと合わせます</span></div>"
+          + '<input type="checkbox" id="tmAuto"' + (recall("autosync") === "0" ? "" : " checked") + "></label>"
           + '<div class="label" style="margin-top:10px">セーブデータ</div>'
           + '<button class="rowbtn" id="tmPush"><div><b>まるごと保存</b>'
           + "<span>いまのフォルダ・写真・メモをひとまとめに。前の保存と入れ替わります。"
@@ -4850,10 +5113,16 @@
         toast("この端末は「" + deviceName() + "」として送ります");
       };
 
-      var send = $("tmSend");
-      if (send) send.onclick = function () {
+      var sy = $("tmSync");
+      if (sy) sy.onclick = function () {
         if (dev) remember("devname", dev.value.trim());
-        sendChanges(function () { teamSheet(); });
+        syncNow(function () { teamSheet(); });
+      };
+
+      var au = $("tmAuto");
+      if (au) au.onchange = function () {
+        remember("autosync", this.checked ? "1" : "0");
+        toast(this.checked ? "自動で同期します" : "自動の同期をやめました");
       };
 
       var push = $("tmPush");
@@ -4948,7 +5217,7 @@
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
       + '<button class="rowbtn" id="sTeam"><div><b>Googleドライブと同期</b>'
       + "<span>" + (Shelf.linked()
-          ? ("接続済み。最後に送ったのは " + whenTxt(recall("sentAt")))
+          ? ("接続済み。最後に同期したのは " + whenTxt(recall("syncAt")))
           : "別の端末と同じ中身にする。チームで使う準備にもなります") + "</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'

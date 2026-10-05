@@ -642,6 +642,8 @@ header.top{padding-top:env(safe-area-inset-top)}
 .rowbtn b{display:block; font-size:14px; font-weight:500}
 .rowbtn span{display:block; font-size:12px; color:var(--ink2); line-height:1.6}
 .rowbtn svg{width:16px;height:16px;flex:0 0 auto;color:var(--ink3)}
+/* 行の右端に置く入り切りの札。配色に合わせる */
+.rowbtn input[type="checkbox"]{width:19px;height:19px;flex:0 0 auto;accent-color:var(--mark);margin:0}
 
 /* 取り込み中の一覧 */
 .queue{display:grid; gap:6px; font-size:12.5px}
