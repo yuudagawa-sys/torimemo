@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "52";
+  var APPVER = "54";
 
   /* ============================================================
      小道具
@@ -479,11 +479,21 @@
   }
 
   /* Googleへの問い合わせ。合鍵を添えて、返事が変なら日本語にして投げ直す */
+  /* この数が0より大きい間は、許可画面を出さない。
+     触ってもいないのに許可画面が出てくると、何事かと驚く。
+     入れ子になっても困らないよう、数で持つ */
+  var noPrompt = 0;
+  function hush(run) {
+    noPrompt++;
+    function done() { noPrompt--; }
+    return run().then(function (v) { done(); return v; },
+                      function (e) { done(); throw e; });
+  }
+
   function gCall(url, opt) {
     opt = opt || {};
-    /* 裏で動いているときは、黙って取り直すだけにする。
-       触ってもいないのに許可画面が出てくると、何事かと驚く */
-    var key = quietSync ? gKey(true) : gKey(true).catch(function () { return gKey(false); });
+    var key = (quietSync || noPrompt) ? gKey(true)
+      : gKey(true).catch(function () { return gKey(false); });
     return key.then(function (t) {
       var h = opt.headers || {};
       h.Authorization = "Bearer " + t;
@@ -492,7 +502,7 @@
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
-        throw new Error("Googleとの接続が切れました。同期の画面からもう一度つないでください。");
+        throw new Error("ログインが切れました。設定のアカウントから、もう一度ログインしてください。");
       }
       if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
       return r.status === 204 ? null : r.json();
@@ -1022,6 +1032,7 @@
       /* 画面が出てからにする。開いた瞬間に通信を始めると、
          最初の描画がもたつく */
       setTimeout(maybeSync, 2500);
+      watchSync();
     }).catch(function (e) {
       booted = true;
       $("stage").innerHTML = '<div class="blank"><h2>データを開けませんでした</h2><p>' + esc(why(e)) + "</p></div>";
@@ -2212,7 +2223,12 @@
       + '<li><span class="k">04</span><div><b>タグで拾う</b>'
       + "<span>写真1枚に何個でも。＃を押すと、フォルダをまたいで同じタグの写真が集まります。★だけを抜き出すこともできます。</span></div></li>"
       + "</ol>"
-      + '<button class="cta" id="goNewEx">フォルダをつくる</button></div>';
+      + '<button class="cta" id="goNewEx">フォルダをつくる</button>'
+      + (Shelf.linked() ? ""
+          : '<p class="blanklog">別の端末でもう使っているなら、'
+            + '<button class="linklike" id="goLogin">Googleでログイン</button>'
+            + "すると、そのままの中身が出てきます。</p>")
+      + "</div>";
   }
 
   /* ============================================================
@@ -2263,6 +2279,7 @@
       return;
     }
     if (ev.target.id === "goNewEx") { newExDialog(); return; }
+    if (ev.target.id === "goLogin") { teamSheet(); return; }
   });
 
   $("exPick").onclick = function () { if (screen === "folder") goShelf(); };
@@ -4864,6 +4881,36 @@
   }
   function myIndexName() { return devId() + ".json"; }
 
+  /* 端末の番号と呼び名の対応。受け取ったときに書き足していく。
+     ドライブのファイル名は番号なので、これが無いと誰のものか分からない */
+  function devNames() {
+    try { return JSON.parse(recall("devnames") || "{}") || {}; } catch (e) { return {}; }
+  }
+  function noteDevName(id, name) {
+    if (!id || !name) return;
+    var m = devNames();
+    if (m[id] === name) return;
+    m[id] = name;
+    try { remember("devnames", JSON.stringify(m)); } catch (e) {}
+  }
+
+  /* いまログインしている端末。ドライブに置かれた記録から数える。
+     ここに出てこない端末は、まだログインしていない */
+  function devicesOnDrive() {
+    return hush(function () {
+      return syncPlace().then(function (p) { return Shelf.list(p.sync); });
+    }).then(function (rows) {
+      var me = myIndexName(), names = devNames();
+      return rows.filter(function (f) { return /\.json$/.test(f.name); })
+        .map(function (f) {
+          var id = f.name.replace(/\.json$/, "");
+          return { id: id, mine: f.name === me, at: f.at,
+                   name: f.name === me ? deviceName() : (names[id] || "別の端末") };
+        })
+        .sort(function (a, b) { return (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || b.at - a.at; });
+    });
+  }
+
   /* この端末が持っている記録。写真そのものは入らない */
   function myRecords() {
     return Promise.all([DB.all("exhibitions"), DB.all("items"),
@@ -5070,16 +5117,20 @@
   }
 
   function takeChanges() {
-    var place = null, mine = myIndexName();
+    var place = null, mine = myIndexName(), fresh = [];
     progress(50);
     return syncPlace().then(function (p) {
       place = p;
       return Shelf.list(p.sync);
     }).then(function (rows) {
       var others = rows.filter(function (f) {
-        return /\.json$/.test(f.name) && f.name !== mine;
+        if (!/\.json$/.test(f.name) || f.name === mine) return false;
+        /* 前に見たときから変わっていなければ、降ろす必要がない。
+           見張りを増やしても通信が増えないのは、これのおかげ */
+        return f.at > Number(recall("seen:" + f.name) || 0);
       });
       if (!others.length) return null;
+      fresh = others;
       progress(56);
       stoast("ほかの端末の記録を読んでいます…（" + others.length + "台）");
       var box = [], i = 0;
@@ -5088,7 +5139,13 @@
         var f = others[i++];
         progress(56 + Math.round((i / others.length) * 10));
         return Shelf.get(f.fileId).then(function (b) { return b.text(); })
-          .then(function (t) { try { box.push(JSON.parse(t)); } catch (e) {} })
+          .then(function (t) {
+            try {
+              var ix = JSON.parse(t);
+              box.push(ix);
+              noteDevName(ix.dev, ix.name);
+            } catch (e) {}
+          })
           .catch(function () {}).then(next);
       })();
     }).then(function (box) {
@@ -5097,6 +5154,8 @@
     }).then(function (out) {
       if (out === "none") return { none: true, add: 0, upd: 0, del: 0, got: 0 };
       remember("tookAt", String(Date.now()));
+      /* ここまで無事に済んでから控える。途中で切れたら、次にまた降ろす */
+      fresh.forEach(function (f) { remember("seen:" + f.name, String(f.at)); });
       return reloadAll().then(function () { return out; });
     });
   }
@@ -5122,8 +5181,11 @@
       if (down.add) said.push("新しく " + down.add + "件");
       if (down.upd) said.push("直し " + down.upd + "件");
       if (down.del) said.push("消し " + down.del + "件");
-      if (said.length) toast("同期しました（" + said.join(" ・ ") + "）");
-      else if (!quietSync) toast("変わったものはありませんでした");
+      /* 裏で5分おきに回っているときは、何か増えたときだけ知らせる。
+         自分の記録を置き直しただけで毎回しゃべられると、うるさい */
+      var worth = up.sent || down.add || down.upd || down.del;
+      if (!quietSync) toast(said.length ? ("同期しました（" + said.join(" ・ ") + "）") : "変わったものはありませんでした");
+      else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
       unsent = false;
       syncing = false; quietSync = false;
       if (after) after();
@@ -5138,12 +5200,24 @@
      ほかのことをして戻ってきたときに、そっと走らせる。
      立て続けに動かないよう、前からしばらく空いているときだけ */
   var AUTO_GAP = 5 * 60 * 1000;
+  var autoTimer = null;
+  /* 開きっぱなしのパソコンは、戻ってくることがないので
+     「戻ってきたとき」の合図が一度も来ない。時計でも見にいく */
+  function watchSync() {
+    clearInterval(autoTimer);
+    autoTimer = setInterval(function () {
+      /* 隠れている間は見にいかない。見ていない画面を直しても仕方がない */
+      if (!document.hidden) maybeSync(true);
+    }, AUTO_GAP);
+  }
   function autoSyncOn() { return recall("autosync") !== "0"; }
-  function maybeSync() {
+  /* now を立てると、間が空いていなくても走らせる。
+     時計からの呼び出しは、すでに間隔そのものなので待たせない */
+  function maybeSync(now) {
     if (syncing || !Shelf.linked() || !autoSyncOn()) return;
     /* まだ送っていないものがあるときは、間を空けずに走らせる。
        撮ったものがいつまでも向こうに出てこないと、同期の意味がない */
-    if (!unsent && Date.now() - Number(recall("syncAt") || 0) < AUTO_GAP) return;
+    if (!now && !unsent && Date.now() - Number(recall("syncAt") || 0) < AUTO_GAP) return;
     syncNow(null, true);
   }
 
@@ -5181,7 +5255,7 @@
     function paintTeam() {
       var on = Shelf.linked();
       var body = on
-        ? '<div class="linked"><b>接続済み</b><span>'
+        ? '<div class="linked"><b>ログイン中</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "このGoogleアカウント") + "</span></div>"
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
@@ -5194,6 +5268,8 @@
           + '<label class="rowbtn" for="tmAuto" style="cursor:pointer"><div><b>開いたときに自動で同期</b>'
           + "<span>ほかのことをして戻ってきたときも、そっと合わせます</span></div>"
           + '<input type="checkbox" id="tmAuto"' + (recall("autosync") === "0" ? "" : " checked") + "></label>"
+          + '<div class="label" style="margin-top:10px">ログインしている端末</div>'
+          + '<div id="tmWho"><div class="saveflag">調べています…</div></div>'
           + '<div class="label" style="margin-top:10px">セーブデータ</div>'
           + '<button class="rowbtn" id="tmPush"><div><b>まるごと保存</b>'
           + "<span>いまのフォルダ・写真・メモをひとまとめに。前の保存と入れ替わります。"
@@ -5206,16 +5282,17 @@
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
-          + '<button class="danger" id="tmOff">接続を解除</button>'
-        : '<button class="rowbtn" id="tmOn"><div><b>Googleドライブに接続</b>'
-          + "<span>許可の画面が出ます。写真の置き場所として使います</span></div>"
-          + '<svg><use href="#i-plus"/></svg></button>';
+          + '<button class="danger" id="tmOff">ログアウト</button>'
+        : '<button class="rowbtn" id="tmOn"><div><b>Googleでログイン</b>'
+          + "<span>この端末を、ほかの端末と同じ中身にします。"
+          + "別の端末で使っていたフォルダは、ログインすれば出てきます</span></div>"
+          + '<svg><use href="#i-sync"/></svg></button>';
 
-      sheet('<div class="panel-head"><h3>Googleドライブと同期</h3>'
+      sheet('<div class="panel-head"><h3>アカウント</h3>'
         + '<button class="iconbtn" id="tmClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
         + '<div class="panel-body"><div class="stack">'
-        + '<div class="hintline">iPhone・パソコンで同じ中身にするには、間に立つ置き場所が要ります。'
-        + "Rawpoは<b>あなた自身のGoogleドライブ</b>を使います。写真がRawpoのサーバーを通ることはありません。</div>"
+        + '<div class="hintline">使う端末それぞれで<b>同じGoogleアカウントにログイン</b>すると、中身がそろいます。'
+        + "置き場所は<b>あなた自身のGoogleドライブ</b>です。写真がRawpoのサーバーを通ることはありません。</div>"
         + body
         + '<div class="saveflag" id="tmSay"></div>'
         + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
@@ -5233,7 +5310,7 @@
       if (on1) on1.onclick = function () {
         say("Googleの画面を開いています…");
         Shelf.link().then(function () {
-          toast("接続しました");
+          toast("ログインしました");
           paintTeam();
         }).catch(function (e) { say(why(e), true); });
       };
@@ -5249,6 +5326,28 @@
         if (dev) remember("devname", dev.value.trim());
         syncNow(function () { teamSheet(); });
       };
+
+      /* ここに出てこない端末は、まだログインしていない。
+         「片方だけ出てこない」はたいていこれ */
+      var who = $("tmWho");
+      if (who) devicesOnDrive().then(function (list) {
+        if (!$("tmWho")) return;
+        if (!list.length) {
+          $("tmWho").innerHTML = '<div class="hintline">まだ記録がありません。'
+            + "下の「いますぐ同期」を一度押してください。</div>";
+          return;
+        }
+        $("tmWho").innerHTML = list.map(function (d) {
+          return '<div class="devrow"><b>' + esc(d.name) + (d.mine ? "（この端末）" : "") + "</b>"
+            + "<span>" + whenTxt(d.at) + " に送信</span></div>";
+        }).join("")
+          + (list.length < 2
+              ? '<div class="hintline">ほかの端末はまだログインしていません。'
+                + "その端末でも、設定の<b>アカウント</b>から同じGoogleアカウントにログインしてください。</div>"
+              : "");
+      }).catch(function (e) {
+        if ($("tmWho")) $("tmWho").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
+      });
 
       var au = $("tmAuto");
       if (au) au.onchange = function () {
@@ -5307,7 +5406,7 @@
 
       var off = $("tmOff");
       if (off) off.onclick = function () {
-        Shelf.unlink().then(function () { toast("接続を解除しました"); paintTeam(); });
+        Shelf.unlink().then(function () { toast("ログアウトしました"); paintTeam(); });
       };
 
       var t = $("tmTest");
@@ -5382,7 +5481,7 @@
           + "<p>★を付けたものだけを並べることもできます。</p>")
 
       + qa("iPhoneとパソコンで同じ中身にする",
-          "<p>設定 → <b>Googleドライブと同期</b> から、同じGoogleアカウントにつなぎます。"
+          "<p>使う端末それぞれで、設定 → <b>アカウント</b> から同じGoogleアカウントにログインします。"
           + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、Rawpoのサーバーは通りません。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
           + "手で合わせたいときは「いますぐ同期」を押します。</p>"
@@ -5407,8 +5506,11 @@
       + qa("うまくいかないとき",
           "<p><b>新しい版が来ない</b><br>アプリをいったん完全に閉じて、開き直してください。"
           + "いまの版は、この設定画面の見出しの横に出ています（v" + esc(APPVER) + "）。</p>"
-          + "<p><b>「接続が切れました」と出た</b><br>合鍵の期限が切れただけです。"
-          + "設定 → Googleドライブと同期 から、もう一度つなげば直ります。</p>"
+          + "<p><b>「ログインが切れました」と出た</b><br>合鍵の期限が切れただけです。"
+          + "設定 → アカウント から、もう一度ログインすれば直ります。</p>"
+          + "<p><b>片方の端末にだけ出てこない</b><br>その端末がまだログインしていない可能性があります。"
+          + "設定 → アカウント を開くと、いまログインしている端末が並びます。"
+          + "そこに出てこない端末では、ログインしてください。</p>"
           + "<p><b>一緒に使う人がログインできない</b><br>いまはお試しの段階で、"
           + "Google側に登録した人しか使えません。その人のGmailを登録する必要があります。</p>"
           + "<p><b>容量が気になる</b><br>設定の<b>端末の使用量</b>で見られます。"
@@ -5436,6 +5538,12 @@
       + '<span class="ver">v' + esc(APPVER) + "</span></h3>"
       + '<button class="iconbtn" id="sClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
+      + '<button class="rowbtn" id="sTeam"><div><b>'
+      + (Shelf.linked() ? "アカウント" : "Googleでログイン") + "</b>"
+      + "<span>" + (Shelf.linked()
+          ? (esc(Shelf.who() || "ログイン中") + "・最後に同期したのは " + whenTxt(recall("syncAt")))
+          : "ログインすると、iPhone・パソコンで同じ中身になります") + "</span></div>"
+      + '<svg><use href="#i-sync"/></svg></button>'
       + '<button class="rowbtn" id="sNew"><div><b>新しく作る</b>'
       + '<span>テンプレートを選んで、フォルダを1つ作ります</span></div><svg><use href="#i-plus"/></svg></button>'
       + (screen === "folder" ? '<button class="rowbtn" id="sExport"><div><b>このフォルダを共有する</b><span>AirDrop・LINE・メールへ。端末の共有シートが開きます</span></div><svg><use href="#i-share"/></svg></button>' : "")
@@ -5446,11 +5554,6 @@
       + "<span>" + esc(photoSize().name) + "・長辺" + photoSize().edge + "px"
       + (asksSize() ? "。取り込むたびにきく" : "。取り込むときはきかない") + "</span></div><svg><use href=\"#i-cam\"/></svg></button>"
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
-      + '<button class="rowbtn" id="sTeam"><div><b>Googleドライブと同期</b>'
-      + "<span>" + (Shelf.linked()
-          ? ("接続済み。最後に同期したのは " + whenTxt(recall("syncAt")))
-          : "別の端末と同じ中身にする。チームで使う準備にもなります") + "</span></div>"
-      + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
       + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
       + '<svg><use href="#i-star"/></svg></button>'
