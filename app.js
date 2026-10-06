@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "62";
+  var APPVER = "63";
 
   /* ============================================================
      小道具
@@ -1615,7 +1615,10 @@
         var bs = $("bdSet");
         if (bs) bs.onclick = function () { if (bd) boardDialog(bd); };
       }
-      $("exMeta").innerHTML = "<span>" + ((bd && bd.cards || []).length) + " 枚</span>";
+      $("exMeta").innerHTML = bd
+        ? "<span>" + (curPage + 1) + " / " + pagesOf(bd).length + " ページ</span><span>"
+          + ((pageOf(bd).cards || []).length) + " 枚</span>"
+        : "";
       return;
     }
     document.documentElement.setAttribute("data-screen", "folder");
@@ -2036,7 +2039,8 @@
           out.push('<button class="bdcard" data-board="' + esc(bd.id) + '">'
             + '<span class="bdpaper" style="aspect-ratio:' + sz.w + "/" + sz.h + '"></span>'
             + '<span class="bdname">' + esc(bd.name) + "</span>"
-            + '<span class="bdsub">' + esc(paperName(bd)) + " · " + ((bd.cards || []).length) + " 枚</span>"
+            + '<span class="bdsub">' + esc(paperName(bd)) + " · "
+            + pagesOf(bd).length + " ページ · " + boardCount(bd) + " 枚</span>"
             + "</button>");
         });
         out.push("</div></div>");
@@ -6116,21 +6120,50 @@
   }
 
   var boards = [];
-  var curBoard = null, boardSel = "";
+  var curBoard = null, boardSel = "", curPage = 0;
+
+  /* ボードは何ページでも持てる。
+     前の版は1枚ぶんを cards に直接持っていたので、
+     開いたときに1ページ目として引き取る */
+  function pagesOf(b) {
+    if (!b.pages || !b.pages.length) {
+      b.pages = [{ id: uid(), cards: (b.cards || []).slice() }];
+      delete b.cards;
+    }
+    return b.pages;
+  }
+  function pageOf(b) {
+    var ps = pagesOf(b);
+    if (curPage >= ps.length) curPage = ps.length - 1;
+    if (curPage < 0) curPage = 0;
+    return ps[curPage];
+  }
+  /* 全ページを合わせた枚数。棚の札と上の帯に出す */
+  function boardCount(b) {
+    var n = 0;
+    pagesOf(b).forEach(function (pg) { n += (pg.cards || []).length; });
+    return n;
+  }
 
   /* 目安の線。紙の横幅を8つに割った幅を1ますとし、
      縦もその幅で割る。こうするとます目が正方形になる */
   var GRIDN = 8;
   var GRIDS = [
-    { k: "",     name: "線なし" },
-    { k: "v",    name: "縦" },
-    { k: "h",    name: "横" },
-    { k: "both", name: "格子" }
+    { k: "",     name: "線なし", n: GRIDN },
+    { k: "v",    name: "縦",     n: GRIDN },
+    { k: "h",    name: "横",     n: GRIDN },
+    { k: "both", name: "格子 大", n: GRIDN },
+    { k: "fine", name: "格子 小", n: GRIDN * 2 }
   ];
-  /* 紙に対する割合での、ます目の幅と高さ */
+  function gridOf(b) {
+    var k = (b && b.grid) || "";
+    return GRIDS.filter(function (x) { return x.k === k; })[0] || GRIDS[0];
+  }
+  /* 紙に対する割合での、ます目の幅と高さ。
+     吸い付きも、いま出している線の細かさに合わせる */
   function gridStep(b) {
     var sz = paperSize(b);
-    var gx = 1 / GRIDN;
+    var gx = 1 / gridOf(b).n;
     return { x: gx, y: (sz.w * gx) / sz.h };
   }
   /* 吸い付き。近い線があればそこへ寄せる。
@@ -6145,7 +6178,7 @@
     return null;
   }
   function saveBoard(b, after) {
-    b.cards = b.cards || [];
+    pagesOf(b);
     DB.put("boards", b).then(function () {
       var i = -1;
       for (var k = 0; k < boards.length; k++) if (boards[k].id === b.id) i = k;
@@ -6222,7 +6255,7 @@
       var nm = ($("bdName").value || "").trim() || "名前のないボード";
       if (mk) {
         var rec = { id: uid(), name: nm, paper: pick.paper, lay: pick.lay,
-                    cards: [], createdAt: Date.now() };
+                    pages: [{ id: uid(), cards: [] }], createdAt: Date.now() };
         saveBoard(rec, function () { closeSheet(); openBoard(rec.id); });
       } else {
         e.name = nm; e.paper = pick.paper; e.lay = pick.lay;
@@ -6251,7 +6284,7 @@
     var b = boardById(id);
     if (!b) return Promise.resolve();
     picking = false; picked = {};
-    screen = "board"; curBoard = id; boardSel = "";
+    screen = "board"; curBoard = id; boardSel = ""; curPage = 0;
     clearSearch();
     dropUrls(); items = [];
     return DB.all("items").then(function (all) { browseAll = all; }, function () {})
@@ -6262,7 +6295,8 @@
   function paintBoard(stage, seq) {
     var b = boardById(curBoard);
     if (!b) { goShelf(); return; }
-    var cards = b.cards || [];
+    var page = pageOf(b);
+    var cards = page.cards || [];
     var need = cards.map(function (c) {
       var it = anyItem(c.itemId);
       return it ? (it.blobId || it.thumbId) : null;
@@ -6271,7 +6305,16 @@
     ensureUrls(need).then(function () {
       if (seq !== paintSeq) return;
       var sz = paperSize(b);
-      var out = '<div class="boardwrap">'
+      var ps = pagesOf(b);
+      var out = '<div class="boardpager" id="boardPager">'
+        + '<button id="pgPrev" aria-label="前のページ"' + (curPage <= 0 ? " disabled" : "") + ">‹</button>"
+        + '<span class="pgn">' + (curPage + 1) + " / " + ps.length + "</span>"
+        + '<button id="pgNext" aria-label="次のページ"' + (curPage >= ps.length - 1 ? " disabled" : "") + ">›</button>"
+        + '<span style="flex:1 1 auto"></span>'
+        + '<button id="pgAdd">ページを足す</button>'
+        + (ps.length > 1 ? '<button id="pgDel" class="bad">このページを消す</button>' : "")
+        + "</div>"
+        + '<div class="boardwrap">'
         + '<div class="paper" id="paper" style="aspect-ratio:' + sz.w + "/" + sz.h + '">';
       cards.forEach(function (c, i) {
         var it = anyItem(c.itemId);
@@ -6286,11 +6329,36 @@
         + '<div class="boardtools" id="boardTools"></div>'
         + '<div class="boardbar" id="boardBar"></div>';
       stage.innerHTML = out;
+      wirePager(b);
       paintGrid(b);
-      wireBoard(b);
+      wireBoard(b, page);
       paintTools(b);
       paintBoardBar(b);
     });
+  }
+
+  function wirePager(b) {
+    var ps = pagesOf(b);
+    var pv = $("pgPrev"), nx = $("pgNext"), ad = $("pgAdd"), dl = $("pgDel");
+    if (pv) pv.onclick = function () { if (curPage > 0) { curPage--; boardSel = ""; paint(); } };
+    if (nx) nx.onclick = function () { if (curPage < ps.length - 1) { curPage++; boardSel = ""; paint(); } };
+    if (ad) ad.onclick = function () {
+      ps.push({ id: uid(), cards: [] });
+      curPage = ps.length - 1; boardSel = "";
+      saveBoard(b, function () { paint(); toast(ps.length + " ページになりました"); });
+    };
+    if (dl) dl.onclick = function () {
+      askYesNo({
+        title: (curPage + 1) + " ページ目を消す",
+        body: "このページに貼ってあるものだけを消します。写真そのものはフォルダに残ります。",
+        ok: "消す"
+      }, function () {
+        ps.splice(curPage, 1);
+        if (curPage >= ps.length) curPage = ps.length - 1;
+        boardSel = "";
+        saveBoard(b, function () { paint(); toast("消しました"); });
+      });
+    };
   }
 
   /* 目安の線は紙の背景として描く。書き出した絵には出ない */
@@ -6300,14 +6368,15 @@
     var g = b.grid || "";
     if (!g) { paper.style.backgroundImage = ""; return; }
     var st = gridStep(b);
-    var line = "rgba(34,64,58,.14)";
+    /* 細かいほうは線を薄くする。濃いままだと面が灰色に見えてしまう */
+    var line = g === "fine" ? "rgba(34,64,58,.10)" : "rgba(34,64,58,.14)";
     var bits = [], size = [];
-    if (g === "v" || g === "both") {
+    if (g === "v" || g === "both" || g === "fine") {
       bits.push("repeating-linear-gradient(to right, " + line + " 0 1px, transparent 1px "
         + (st.x * 100) + "%)");
       size.push("100% 100%");
     }
-    if (g === "h" || g === "both") {
+    if (g === "h" || g === "both" || g === "fine") {
       bits.push("repeating-linear-gradient(to bottom, " + line + " 0 1px, transparent 1px "
         + (st.y * 100) + "%)");
       size.push("100% 100%");
@@ -6320,11 +6389,13 @@
     var el = $("boardTools");
     if (!el) return;
     var g = b.grid || "";
-    var now = GRIDS.filter(function (x) { return x.k === g; })[0] || GRIDS[0];
-    el.innerHTML = '<button id="bdGrid"><span class="bk"></span>' + esc(now.name) + "</button>"
+    var now = gridOf(b);
+    el.innerHTML = '<button id="bdGrid"><span class="bk' + (g === "fine" ? " fine" : "") + '"></span>'
+      + esc(now.name) + "</button>"
       + '<button id="bdSnap" aria-pressed="' + (!!b.snap) + '">吸い付き</button>'
       + '<span style="flex:1 1 auto"></span>'
-      + '<button id="bdOut" class="go">1枚の画像にする</button>';
+      + '<button id="bdOut">1枚の画像にする</button>'
+      + '<button id="bdPdf" class="go">PDFにする</button>';
     /* 押すたびに、線なし→縦→横→格子と回る。1タップで変えられる */
     $("bdGrid").onclick = function () {
       var i = 0;
@@ -6337,12 +6408,13 @@
       saveBoard(b, function () { paintTools(b); toast(b.snap ? "線に吸い付きます" : "吸い付きをやめました"); });
     };
     $("bdOut").onclick = function () { boardOut(b); };
+    $("bdPdf").onclick = function () { boardPdf(b); };
   }
 
   function paintBoardBar(b) {
     var bar = $("boardBar");
     if (!bar) return;
-    var c = (b.cards || []).filter(function (x) { return x.id === boardSel; })[0];
+    var c = (pageOf(b).cards || []).filter(function (x) { return x.id === boardSel; })[0];
     bar.innerHTML = c
       ? '<button data-bd="back">うしろへ</button>'
         + '<button data-bd="front">まえへ</button>'
@@ -6356,20 +6428,20 @@
   }
 
   function boardAct(b, k) {
-    var i = -1;
-    (b.cards || []).forEach(function (c, n) { if (c.id === boardSel) i = n; });
+    var page = pageOf(b), i = -1;
+    (page.cards || []).forEach(function (c, n) { if (c.id === boardSel) i = n; });
     if (i < 0) return;
-    var c = b.cards[i];
-    if (k === "off") { b.cards.splice(i, 1); boardSel = ""; }
-    else if (k === "front") { b.cards.splice(i, 1); b.cards.push(c); }
-    else if (k === "back") { b.cards.splice(i, 1); b.cards.unshift(c); }
+    var c = page.cards[i];
+    if (k === "off") { page.cards.splice(i, 1); boardSel = ""; }
+    else if (k === "front") { page.cards.splice(i, 1); page.cards.push(c); }
+    else if (k === "back") { page.cards.splice(i, 1); page.cards.unshift(c); }
     else if (k === "left") { c.rot = Math.round(((c.rot || 0) - 5) * 10) / 10; }
     else if (k === "right") { c.rot = Math.round(((c.rot || 0) + 5) * 10) / 10; }
     saveBoard(b, function () { paint(); });
   }
 
   /* 指で動かす・つまんで大きさと傾きを変える */
-  function wireBoard(b) {
+  function wireBoard(b, page) {
     var paper = $("paper");
     if (!paper) return;
     var pts = {}, n = 0, node = null, card = null;
@@ -6377,7 +6449,7 @@
 
     function find(id) {
       var out = null;
-      (b.cards || []).forEach(function (c) { if (c.id === id) out = c; });
+      (page.cards || []).forEach(function (c) { if (c.id === id) out = c; });
       return out;
     }
     function put() {
@@ -6453,66 +6525,162 @@
     });
   }
 
-  /* 1枚の画像にする。印刷に耐える大きさで描く。
-     画面に出している目安の線は、ここには描かない */
+  /* 印刷に耐える大きさで描く。画面に出している目安の線は描かない */
   var BOARD_DPI = 150;
-  function boardOut(b) {
-    var cards = (b.cards || []).filter(function (c) { return anyItem(c.itemId); });
-    if (!cards.length) { toast("まだ写真を貼っていません。", true); return; }
 
+  /* 1ページぶんを絵にする。写真は画面用の小さいほうではなく、元の大きさを使う */
+  function renderPage(b, page, onStep) {
+    var cards = (page.cards || []).filter(function (c) { return anyItem(c.itemId); });
     var sz = paperSize(b);
     var W = Math.round(sz.w / 25.4 * BOARD_DPI);
     var H = Math.round(sz.h / 25.4 * BOARD_DPI);
-    progress(5);
-    toast("1枚にまとめています…");
-
-    /* 画面に出している小さいほうではなく、元の大きさを使う */
     var need = cards.map(function (c) {
       var it = anyItem(c.itemId);
       return it.blobId || it.thumbId;
     });
-    ensureUrls(need).then(function () {
+    return ensureUrls(need).then(function () {
       var cv = document.createElement("canvas");
       cv.width = W; cv.height = H;
       var g = cv.getContext("2d");
       g.fillStyle = "#ffffff";
       g.fillRect(0, 0, W, H);
-
       var i = 0;
-      (function next() {
-        if (i >= cards.length) {
-          progress(94);
-          cv.toBlob(function (blob) {
-            if (!blob) { progress(100); toast("画像を作れませんでした。", true); return; }
-            var nm = "v1_" + safeName(b.name) + "_ボード.jpg";
-            handOver(blob, nm).then(function (how) {
-              progress(100);
-              if (how !== "cancel") toast("1枚にしました（" + W + "×" + H + "・" + mb(blob.size) + "）");
-            }).catch(function (e) { progress(100); toast(why(e), true); });
-          }, "image/jpeg", 0.92);
-          return;
-        }
-        var c = cards[i++];
-        progress(5 + Math.round((i / cards.length) * 86));
-        var it = anyItem(c.itemId);
-        var src = urlCache[it.blobId || it.thumbId];
-        if (!src) { next(); return; }
-        var im = new Image();
-        im.onload = function () {
-          var w = c.w * W;
-          var h = im.naturalHeight && im.naturalWidth
-            ? w * (im.naturalHeight / im.naturalWidth) : w;
-          g.save();
-          g.translate(c.x * W, c.y * H);
-          g.rotate((c.rot || 0) * Math.PI / 180);
-          g.drawImage(im, -w / 2, -h / 2, w, h);
-          g.restore();
-          next();
-        };
-        im.onerror = function () { next(); };
-        im.src = src;
-      })();
-    }).catch(function (e) { progress(100); toast(why(e), true); });
+      return new Promise(function (done) {
+        (function next() {
+          if (i >= cards.length) { done(cv); return; }
+          var c = cards[i++];
+          if (onStep) onStep(i, cards.length);
+          var it = anyItem(c.itemId);
+          var src = urlCache[it.blobId || it.thumbId];
+          if (!src) { next(); return; }
+          var im = new Image();
+          im.onload = function () {
+            var w = c.w * W;
+            var h = im.naturalHeight && im.naturalWidth
+              ? w * (im.naturalHeight / im.naturalWidth) : w;
+            g.save();
+            g.translate(c.x * W, c.y * H);
+            g.rotate((c.rot || 0) * Math.PI / 180);
+            g.drawImage(im, -w / 2, -h / 2, w, h);
+            g.restore();
+            next();
+          };
+          im.onerror = function () { next(); };
+          im.src = src;
+        })();
+      });
+    });
+  }
+
+  function toJpeg(cv, q) {
+    return new Promise(function (done, ng) {
+      cv.toBlob(function (bl) { bl ? done(bl) : ng(new Error("画像を作れませんでした。")); },
+        "image/jpeg", q || 0.92);
+    });
+  }
+
+  /* いま開いているページを1枚の画像にする */
+  function boardOut(b) {
+    var page = pageOf(b);
+    if (!(page.cards || []).length) { toast("このページにはまだ写真がありません。", true); return; }
+    progress(5);
+    toast("1枚にまとめています…");
+    renderPage(b, page, function (i, n) { progress(5 + Math.round((i / n) * 85)); })
+      .then(function (cv) {
+        progress(93);
+        return toJpeg(cv).then(function (blob) {
+          var ps = pagesOf(b);
+          var nm = "v1_" + safeName(b.name)
+            + (ps.length > 1 ? "_" + (curPage + 1) + "ページ" : "") + "_ボード.jpg";
+          return handOver(blob, nm).then(function (how) {
+            progress(100);
+            if (how !== "cancel") toast("1枚にしました（" + cv.width + "×" + cv.height + "・" + mb(blob.size) + "）");
+          });
+        });
+      }).catch(function (e) { progress(100); toast(why(e), true); });
+  }
+
+  /* ============================================================
+     小さなPDF書き
+     ------------------------------------------------------------
+     1ページに写真を1枚、紙いっぱいに貼るだけ。
+     JPEGはPDFがそのまま読める形なので、詰め直さずに入れている。
+     外の部品は使わない。電波がなくても作れるように。
+     ============================================================ */
+  function pdfWrite(pages) {
+    var chunks = [], len = 0, enc = new TextEncoder();
+    function put(x) {
+      var u = typeof x === "string" ? enc.encode(x) : x;
+      chunks.push(u); len += u.length;
+    }
+    var at = [];
+    function obj(n, body, stream) {
+      at[n] = len;
+      put(n + " 0 obj\n" + body + "\n");
+      if (stream) { put("stream\n"); put(stream); put("\nendstream\n"); }
+      put("endobj\n");
+    }
+    put("%PDF-1.4\n");
+    /* ここは「このファイルは文字だけではない」という目印。生の値で置く */
+    put(new Uint8Array([0x25, 0xE2, 0xE3, 0xCF, 0xD3, 0x0A]));
+
+    var n = pages.length, kids = [];
+    for (var i = 0; i < n; i++) kids.push((3 + i * 3) + " 0 R");
+    obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    obj(2, "<< /Type /Pages /Kids [" + kids.join(" ") + "] /Count " + n + " >>");
+    pages.forEach(function (p, k) {
+      var pg = 3 + k * 3, ct = pg + 1, im = pg + 2;
+      obj(pg, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + p.w + " " + p.h + "]"
+        + " /Resources << /XObject << /Im0 " + im + " 0 R >> >> /Contents " + ct + " 0 R >>");
+      var sc = "q\n" + p.w + " 0 0 " + p.h + " 0 0 cm\n/Im0 Do\nQ";
+      obj(ct, "<< /Length " + sc.length + " >>", sc);
+      obj(im, "<< /Type /XObject /Subtype /Image /Width " + p.iw + " /Height " + p.ih
+        + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+        + p.jpg.length + " >>", p.jpg);
+    });
+
+    var top = 2 + n * 3, xref = len;
+    var t = "xref\n0 " + (top + 1) + "\n0000000000 65535 f \n";
+    for (var k2 = 1; k2 <= top; k2++) {
+      t += ("0000000000" + at[k2]).slice(-10) + " 00000 n \n";
+    }
+    put(t);
+    put("trailer\n<< /Size " + (top + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+    return new Blob(chunks, { type: "application/pdf" });
+  }
+
+  /* 全ページを1冊のPDFにする */
+  function boardPdf(b) {
+    var ps = pagesOf(b).filter(function (pg) { return (pg.cards || []).length; });
+    if (!ps.length) { toast("まだ写真を貼っていません。", true); return; }
+    var sz = paperSize(b);
+    /* PDFの寸法はポイント。1インチ72ポイント */
+    var pw = Math.round(sz.w / 25.4 * 72), ph = Math.round(sz.h / 25.4 * 72);
+    progress(4);
+    toast("1冊にまとめています…（" + ps.length + "ページ）");
+    var out = [], i = 0;
+    (function next() {
+      if (i >= ps.length) {
+        progress(94);
+        try {
+          var blob = pdfWrite(out);
+          handOver(blob, "v1_" + safeName(b.name) + "_ボード.pdf").then(function (how) {
+            progress(100);
+            if (how !== "cancel") toast("1冊にしました（" + ps.length + "ページ・" + mb(blob.size) + "）");
+          }).catch(function (e) { progress(100); toast(why(e), true); });
+        } catch (e) { progress(100); toast(why(e), true); }
+        return;
+      }
+      var pg = ps[i++];
+      progress(4 + Math.round((i / ps.length) * 86));
+      renderPage(b, pg).then(function (cv) {
+        return toJpeg(cv, 0.9).then(function (bl) { return bl.arrayBuffer(); })
+          .then(function (ab) {
+            out.push({ w: pw, h: ph, iw: cv.width, ih: cv.height, jpg: new Uint8Array(ab) });
+            next();
+          });
+      }).catch(function (e) { progress(100); toast(why(e), true); });
+    })();
   }
 
   /* 貼る写真を選ぶ。フォルダを跨いで全部から選べる */
@@ -6584,10 +6752,11 @@
         var ids = Object.keys(take);
         if (!ids.length) { closeSheet(); return; }
         /* まん中あたりから、少しずつずらして重ねて置く */
-        var k = (b.cards || []).length;
+        var page = pageOf(b);
+        var k = (page.cards || []).length;
         ids.forEach(function (id, i) {
           var step = (k + i) % 8;
-          b.cards.push({
+          page.cards.push({
             id: uid(), itemId: id,
             x: 0.34 + (step % 4) * 0.1, y: 0.3 + Math.floor(step / 4) * 0.22,
             w: 0.34, rot: 0

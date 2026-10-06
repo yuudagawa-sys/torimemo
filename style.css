@@ -515,6 +515,22 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
   display:block; padding:12px; font-size:11px; line-height:1.5;
   background:var(--sunk); color:var(--ink3);
 }
+/* ページの行き来 */
+.boardpager{
+  display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+  padding:2px 0 8px;
+}
+.boardpager button{
+  padding:6px 12px; border:1px solid var(--line2); border-radius:999px;
+  background:var(--card); font-size:12.5px; color:var(--ink);
+}
+.boardpager button:disabled{opacity:.35}
+.boardpager button.bad{color:var(--rec)}
+.boardpager .pgn{
+  font-family:var(--mono); font-variant-numeric:tabular-nums;
+  font-size:12.5px; color:var(--ink2); padding:0 2px;
+}
+
 /* ボードの道具。線の出しかた・吸い付き・書き出し */
 .boardtools{
   display:flex; gap:6px; align-items:center; flex-wrap:wrap;
@@ -533,6 +549,8 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
                    linear-gradient(to bottom, currentColor 0 1px, transparent 1px 50%);
   background-size:50% 50%;
 }
+/* 細かいほうは、札の絵も細かく */
+.boardtools .bk.fine{background-size:25% 25%}
 
 /* 選んだ写真に効く帯 */
 .boardbar{
