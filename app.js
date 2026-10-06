@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "70";
+  var APPVER = "71";
 
   /* ============================================================
      小道具
@@ -2093,6 +2093,14 @@
     var need = [];
     folders.forEach(function (e) { if (cover[e.id]) need.push(cover[e.id].thumbId || cover[e.id].blobId); });
     hits.forEach(function (it) { if (it.thumbId || it.blobId) need.push(it.thumbId || it.blobId); });
+    /* ボードの1ページ目に貼ってあるぶんも先に用意する。
+       これが無いと、下絵が一部しか出ない */
+    boards.forEach(function (bd) {
+      ((pagesOf(bd)[0] || {}).cards || []).forEach(function (c) {
+        var it = anyItem(c.itemId);
+        if (it && (it.thumbId || it.blobId)) need.push(it.thumbId || it.blobId);
+      });
+    });
 
     ensureUrls(need).then(function () {
       if (seq !== paintSeq) return;
@@ -2154,8 +2162,23 @@
         out.push('<div class="bdgrid">');
         boards.slice().sort(function (x, y) { return (y.upAt || 0) - (x.upAt || 0); }).forEach(function (bd) {
           var sz = paperSize(bd);
+          /* 1ページ目の中身を、そのままの置きかたで小さく描く。
+             白い紙だけ並んでいても、どのボードか見分けがつかない */
+          var pg = pagesOf(bd)[0] || { cards: [] };
+          var mini = "";
+          (pg.cards || []).forEach(function (c, i) {
+            var it = anyItem(c.itemId);
+            var src = it ? urlCache[it.thumbId || it.blobId] : "";
+            if (!src) return;
+            mini += '<img class="bdbit" src="' + src + '" alt="" loading="lazy"'
+              + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
+              + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">';
+          });
+          /* 貼ってあるのに1枚も描けないときは、写真がまだ届いていない。
+             真っ白な紙だけ出して黙っていると、壊れたように見える */
+          if (!mini && boardCount(bd)) mini = '<span class="bdwait">写真を取り寄せ中</span>';
           out.push('<button class="bdcard" data-board="' + esc(bd.id) + '">'
-            + '<span class="bdpaper" style="aspect-ratio:' + sz.w + "/" + sz.h + '"></span>'
+            + '<span class="bdpaper" style="aspect-ratio:' + sz.w + "/" + sz.h + '">' + mini + "</span>"
             + '<span class="bdname">' + esc(bd.name) + "</span>"
             + '<span class="bdsub">' + esc(paperName(bd)) + " · "
             + pagesOf(bd).length + " ページ · " + boardCount(bd) + " 枚</span>"

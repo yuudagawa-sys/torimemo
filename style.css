@@ -491,11 +491,24 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 /* ---------- ボード ---------- */
 /* 棚に並ぶボードの札。紙の形がそのまま出る */
 .bdgrid{display:grid; grid-template-columns:repeat(2,1fr); gap:12px}
+/* 窓が広いとき、2列のままだと紙の縦長がそのまま効いて、
+   ボード1枚が画面を埋めてしまう。幅に応じて列を増やす */
+@media (min-width:620px){
+  .bdgrid{grid-template-columns:repeat(auto-fill, minmax(150px, 1fr))}
+}
 .bdcard{display:block; text-align:left; padding:0}
 .bdpaper{
-  display:block; width:100%; background:var(--card);
+  display:block; position:relative; overflow:hidden;
+  width:100%; background:var(--card);
   border:1px solid var(--line2); border-radius:calc(var(--r) * .6);
   box-shadow:0 1px 3px rgba(24,28,26,.06);
+}
+/* 紙の上に置いた1枚。ボード画面と同じ置きかたを、そのまま小さく */
+.bdbit{position:absolute; display:block; line-height:0}
+/* まだ写真が届いていないボード */
+.bdwait{
+  position:absolute; left:0; right:0; top:50%; transform:translateY(-50%);
+  text-align:center; font-size:11px; color:var(--ink3);
 }
 .bdname{display:block; margin-top:7px; font-size:14px; font-weight:700; color:var(--ink)}
 .bdsub{display:block; margin-top:2px; font-size:11px; color:var(--ink3)}
