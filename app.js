@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "69";
+  var APPVER = "70";
 
   /* ============================================================
      小道具
@@ -1150,6 +1150,15 @@
     /* ほかのアプリから戻ってきたとき。別の端末で触っていた分を拾う */
     document.addEventListener("visibilitychange", function () {
       if (!document.hidden) setTimeout(maybeSync, 800);
+    });
+    /* パソコンでは、窓を後ろに回しても「隠れた」ことにならない場合がある。
+       そのときは visibilitychange が一度も鳴らず、時計も止められてしまう。
+       窓が前に出たことを別の合図として拾っておく */
+    window.addEventListener("focus", function () { setTimeout(maybeSync, 600); });
+    window.addEventListener("pageshow", function () { setTimeout(maybeSync, 600); });
+    /* 窓を閉じる前に、送り残しがあるなら印だけでも残す */
+    window.addEventListener("pagehide", function () {
+      if (unsent) remember("unsent", "1");
     });
 
     if ("serviceWorker" in navigator) {
@@ -5204,20 +5213,35 @@
      何もしていないのに画面がしゃべり出すと落ち着かない。
      ただし、うまくいかなかったときだけは必ず出す */
   var quietSync = false, syncing = false;
+  /* 最後にしくじった時刻。しばらくは裏から呼ばれても走らない */
+  var failAt = 0, FAIL_GAP = 60 * 1000;
   /* いま何をしているか。押しても何も起きないように見えるのを防ぐため、
      走っている最中でも、そのときの様子を言えるようにしておく */
   var syncSince = 0, syncStep = "";
   function step(t) { syncStep = t; stoast(t); }
   function stoast(t, bad) { if (bad || !quietSync) toast(t, bad); }
 
-  /* まだ送っていないものがあるか。書き込みのたびに立つ */
-  var unsent = false, touchTimer = null;
+  /* まだ送っていないものがあるか。書き込みのたびに立つ。
+     ここを頭の中だけで持っていると、閉じたときに忘れてしまう。
+     パソコンで写真を足してから閉じ、5分以内に開き直すと、
+     「間が空いていない」と見なされて、そのまま送られずに残っていた。
+     端末に書いておけば、開き直しても覚えている */
+  var unsent = recall("unsent") === "1";
+  var touchTimer = null;
+  /* 最後に何かを書いた時刻。同期の最中に書いたものを
+     「送り終わった」と数えてしまわないために要る */
+  var touchAt = 0;
+  function markUnsent(on) {
+    unsent = !!on;
+    remember("unsent", on ? "1" : "");
+  }
   function touched() {
-    unsent = true;
+    touchAt = Date.now();
+    markUnsent(true);
     if (!Shelf.linked() || !autoSyncOn()) return;
     /* 連打のたびに通信しない。手が止まってから送る */
     clearTimeout(touchTimer);
-    touchTimer = setTimeout(function () { maybeSync(); }, 20000);
+    touchTimer = setTimeout(function () { maybeSync(); }, 10000);
   }
 
   var syncRooms = null;   /* 置き場の番号。一度引いたら使い回す */
@@ -5643,12 +5667,17 @@
     }
     syncing = true;
     syncSince = Date.now();
+    var began = syncSince;
     syncStep = "";
     quietSync = !!quiet;
     busyMark();
     var up = null;
     function fell(e) {
       progress(100);
+      /* しくじった直後に、また走り出さない。
+         送り残しがあると間合いの決まりが外れるので、
+         ここで押さえないと、だめな通信を何度も繰り返してしまう */
+      failAt = Date.now();
       syncing = false; quietSync = false; syncStep = "";
       busyMark();
       toast(why(e), true);
@@ -5673,7 +5702,9 @@
       var worth = up.sent || down.add || down.upd || down.del || down.got;
       if (!quietSync) toast(said.length ? ("同期しました（" + said.join(" ・ ") + "）") : "変わったものはありませんでした");
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
-      unsent = false;
+      /* 走っている最中に書いたものは、まだ送れていない。
+         ここで印を下ろすと、その分が置き去りになる */
+      if (touchAt <= began) markUnsent(false);
       syncing = false; quietSync = false; syncStep = "";
       busyMark();
       if (after) after();
@@ -5694,16 +5725,22 @@
      「戻ってきたとき」の合図が一度も来ない。時計でも見にいく */
   function watchSync() {
     clearInterval(autoTimer);
+    /* 1分おきに様子を見る。見るだけなら通信しないので安い。
+       5分の間合いは maybeSync の中で効くので、通信が増えることはない。
+       長い時計にしていると、パソコンのように窓を後ろに回したとき
+       ブラウザが時計そのものを止めてしまい、一度も鳴らないことがある */
     autoTimer = setInterval(function () {
-      /* 隠れている間は見にいかない。見ていない画面を直しても仕方がない */
-      if (!document.hidden) maybeSync(true);
-    }, AUTO_GAP);
+      if (!document.hidden) maybeSync();
+    }, 60 * 1000);
   }
   function autoSyncOn() { return recall("autosync") !== "0"; }
   /* now を立てると、間が空いていなくても走らせる。
      時計からの呼び出しは、すでに間隔そのものなので待たせない */
   function maybeSync(now) {
     if (syncing || !Shelf.linked() || !autoSyncOn()) return;
+    /* 直前にしくじっているなら、少し待つ。
+       手で押したぶん（syncNow を直に呼ぶ）は、ここを通らない */
+    if (Date.now() - failAt < FAIL_GAP) return;
     /* まだ送っていないものがあるときは、間を空けずに走らせる。
        撮ったものがいつまでも向こうに出てこないと、同期の意味がない */
     if (!now && !unsent && Date.now() - Number(recall("syncAt") || 0) < AUTO_GAP) return;
@@ -5761,7 +5798,8 @@
           + '<button class="rowbtn' + (syncing ? " working" : "") + '" id="tmSync"><div><b>いますぐ同期</b>'
           + '<span id="tmSyncSay">' + (syncing
               ? esc(syncStep || "いま同期しています…")
-              : "変わったものを送り、ほかの端末の変わりを受け取ります。"
+              : (unsent ? "まだ送っていないものがあります。" : "")
+                + "変わったものを送り、ほかの端末の変わりを受け取ります。"
                 + "写真は一度送れば二度は送りません。"
                 + "最後に同期したのは " + whenTxt(recall("syncAt"))) + "</span></div>"
           + '<svg><use href="#i-sync"/></svg></button>'
@@ -5852,7 +5890,8 @@
           return;
         }
         if (row) row.classList.remove("working");
-        e.textContent = "変わったものを送り、ほかの端末の変わりを受け取ります。"
+        e.textContent = (unsent ? "まだ送っていないものがあります。" : "")
+          + "変わったものを送り、ほかの端末の変わりを受け取ります。"
           + "写真は一度送れば二度は送りません。"
           + "最後に同期したのは " + whenTxt(recall("syncAt"));
       }, 1200);
