@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "68";
+  var APPVER = "69";
 
   /* ============================================================
      小道具
@@ -1473,7 +1473,10 @@
   function busyMark() {
     var e = $("meBtn");
     if (!e) return;
-    if (typeof syncing !== "undefined" && syncing) e.classList.add("working");
+    /* 裏で静かに走っているぶんは、見せない。
+       触ってもいないのに輪が回り続けると、落ち着かない。
+       押したときだけ回す（押すと quietSync が下りる） */
+    if (typeof syncing !== "undefined" && syncing && !quietSync) e.classList.add("working");
     else e.classList.remove("working");
   }
 
@@ -5225,6 +5228,9 @@
   function forgetSync() {
     remember("sentUpTo", "0");
     remember("sentAt", "");
+    /* 新しい置き場には写真も無い。上げ終わった印も捨てる */
+    remember("sentAll", "");
+    remember("sweptAt", "0");
     try {
       var kill = [];
       for (var i = 0; i < localStorage.length; i++) {
@@ -5353,6 +5359,16 @@
     return out;
   }
 
+  /* 写真まで含めて、ぜんぶ向こうに在ると分かった印。
+     次に開いたとき、置き場を数えにいかずに済ませるために控える */
+  function allSent(rec) {
+    remember("sentAll", String(newestAt(rec)));
+    remember("sweptAt", String(Date.now()));
+  }
+  /* 念のため数え直す間隔。誰かがドライブから手で消していても、
+     ここで気づける */
+  var SWEEP_GAP = 24 * 60 * 60 * 1000;
+
   function sendChanges() {
     var place = null, rec = null, need = [], sent = 0, changed = false;
     progress(4);
@@ -5362,14 +5378,23 @@
       return myRecords();
     }).then(function (r) {
       rec = r;
-      changed = newestAt(rec) > Number(recall("sentUpTo") || 0);
+      var now = newestAt(rec);
+      changed = now > Number(recall("sentUpTo") || 0);
+      /* 前に「ぜんぶ上げ終わった」と分かっていて、そこから何も
+         変えていないなら、写真置き場を数えにいく必要すらない。
+         開くたびに何百件もの一覧を引かないで済む */
+      if (!changed && recall("sentAll") === String(now)
+          && Date.now() - Number(recall("sweptAt") || 0) < SWEEP_GAP) {
+        return "skip";
+      }
       progress(8);
       return Shelf.listMany(place.partsAll);
     }).then(function (rows) {
+      if (rows === "skip") return "same";
       var there = {};
       rows.forEach(function (f) { there[f.name] = 1; });
       need = partIds(rec.items).filter(function (id) { return !there[id]; });
-      if (!changed && !need.length) return "same";
+      if (!changed && !need.length) { allSent(rec); return "same"; }
 
       /* 記録を先に置き、写真はあとから送る。
          写真が何十枚もあると送り終わるまでに何分もかかる。
@@ -5388,7 +5413,7 @@
         new Blob([body], { type: "application/json" })).then(function () {
         remember("sentAt", String(Date.now()));
         remember("sentUpTo", String(newestAt(rec)));
-        if (!need.length) return null;
+        if (!need.length) { allSent(rec); return null; }
         step("写真を送っています…（" + need.length + "件）");
         var i = 0;
         return (function next() {
@@ -5401,7 +5426,11 @@
             if (!b || !b.blob) return null;
             return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
           }).catch(function () { return null; }).then(next);
-        })();
+        })().then(function () {
+          /* 1枚も取りこぼさずに上げ切ったときだけ、印をつける。
+             落ちた分があるなら、次もちゃんと数え直す */
+          if (sent === need.length) allSent(rec);
+        });
       });
     }).then(function (how) {
       if (how === "same") return { same: true, sent: 0 };
@@ -5604,6 +5633,7 @@
         if (!quiet) {
           /* 押した人には、終わったときの知らせも見せる */
           quietSync = false;
+          busyMark();
           toast(syncStep ? ("いま同期しています。" + syncStep) : "いま同期しています…");
         }
         return;
