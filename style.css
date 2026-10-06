@@ -515,31 +515,37 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
   display:block; padding:12px; font-size:11px; line-height:1.5;
   background:var(--sunk); color:var(--ink3);
 }
-/* ページの行き来 */
-.boardpager{
-  display:flex; gap:6px; align-items:center; flex-wrap:wrap;
-  padding:2px 0 8px;
+/* ページの見出しと、足す札 */
+.pagehead{
+  display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+  padding:14px 0 6px;
 }
-.boardpager button{
-  padding:6px 12px; border:1px solid var(--line2); border-radius:999px;
-  background:var(--card); font-size:12.5px; color:var(--ink);
-}
-.boardpager button:disabled{opacity:.35}
-.boardpager button.bad{color:var(--rec)}
-.boardpager .pgn{
-  font-family:var(--mono); font-variant-numeric:tabular-nums;
-  font-size:12.5px; color:var(--ink2); padding:0 2px;
+.pagehead span{font-size:11.5px; letter-spacing:.04em; color:var(--ink3)}
+.pagehead button{font-size:11.5px; color:var(--ink3); padding:2px 6px}
+.pagehead button.bad{color:var(--rec)}
+.pgadd{
+  display:block; width:100%; margin:14px 0 8px; padding:12px;
+  border:1px dashed var(--line2); border-radius:var(--r);
+  background:none; font-size:13px; color:var(--ink2);
 }
 
-/* ボードの道具。線の出しかた・吸い付き・書き出し */
+/* 下の帯。いつも同じところに、同じ高さで居る */
+.boardfix{
+  position:fixed; left:0; right:0; z-index:50;
+  background:var(--paper); border-top:1px solid var(--line);
+  padding:4px var(--pad) 8px;
+}
+/* ボードの道具。線の出しかた・吸い付き・書き出し。
+   折り返さない。折り返すと帯の高さが変わって、画面が跳ねる */
 .boardtools{
-  display:flex; gap:6px; align-items:center; flex-wrap:wrap;
-  padding:10px 0 2px;
+  display:flex; gap:6px; align-items:center; flex-wrap:nowrap;
+  padding:6px 0 2px; min-width:0;
 }
 .boardtools button{
   padding:7px 12px; border:1px solid var(--line2); border-radius:999px;
   background:var(--card); font-size:12.5px; color:var(--ink);
   display:inline-flex; align-items:center; gap:6px;
+  flex:0 0 auto; white-space:nowrap;
 }
 .boardtools button[aria-pressed="true"]{background:var(--ink); border-color:var(--ink); color:var(--paper); font-weight:700}
 .boardtools button.go{background:var(--mark); border-color:var(--mark); color:#fff; font-weight:700}
@@ -552,17 +558,24 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 /* 細かいほうは、札の絵も細かく */
 .boardtools .bk.fine{background-size:25% 25%}
 
-/* 選んだ写真に効く帯 */
+/* 選んだ写真に効く帯。高さは出し入れで変わらないよう決め打ち。
+   入りきらないときは横に送れる */
 .boardbar{
-  display:flex; gap:6px; flex-wrap:wrap; align-items:center;
-  padding:10px 0 4px; border-top:1px solid var(--line);
+  display:flex; gap:6px; flex-wrap:nowrap; align-items:center;
+  /* 出し入れで高さが変わらないよう、決め打ちで取る */
+  padding:0; height:44px; box-sizing:border-box;
+  overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none;
 }
+.boardbar::-webkit-scrollbar{display:none}
 .boardbar button{
   padding:7px 12px; border:1px solid var(--line2); border-radius:999px;
   background:var(--card); font-size:12.5px; color:var(--ink);
+  flex:0 0 auto; white-space:nowrap;
 }
 .boardbar button.bad{color:var(--rec); border-color:var(--line2)}
-.bdhint{font-size:12px; color:var(--ink3)}
+.boardbar button.turn{font-size:16px; line-height:1; padding:5px 11px}
+.bdhint{font-size:12px; color:var(--ink3); white-space:nowrap}
+/* 下の余白は、帯の高さを測って付ける（paintFix）*/
 
 /* 貼る写真を選ぶ画面 */
 .pickgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:10px}

@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "63";
+  var APPVER = "65";
 
   /* ============================================================
      小道具
@@ -1616,8 +1616,7 @@
         if (bs) bs.onclick = function () { if (bd) boardDialog(bd); };
       }
       $("exMeta").innerHTML = bd
-        ? "<span>" + (curPage + 1) + " / " + pagesOf(bd).length + " ページ</span><span>"
-          + ((pageOf(bd).cards || []).length) + " 枚</span>"
+        ? "<span>" + pagesOf(bd).length + " ページ</span><span>" + boardCount(bd) + " 枚</span>"
         : "";
       return;
     }
@@ -2503,6 +2502,7 @@
   function goShelf() {
     picking = false; picked = {};
     screen = "shelf"; curBoard = null; boardSel = "";
+    dropFix();
     clearSearch(); shelfTag = "";
     dropUrls(); items = [];
     return DB.all("items").then(function (all) { browseAll = all; }, function () {})
@@ -2520,6 +2520,7 @@
   function openFolder(id) {
     if (!id) return Promise.resolve();
     picking = false; picked = {};
+    dropFix();
     screen = "folder";
     curEx = id; remember("ex", curEx);
     curTag = "all"; clearSearch();
@@ -6120,7 +6121,7 @@
   }
 
   var boards = [];
-  var curBoard = null, boardSel = "", curPage = 0;
+  var curBoard = null, boardSel = "";
 
   /* ボードは何ページでも持てる。
      前の版は1枚ぶんを cards に直接持っていたので、
@@ -6132,13 +6133,32 @@
     }
     return b.pages;
   }
-  function pageOf(b) {
-    var ps = pagesOf(b);
-    if (curPage >= ps.length) curPage = ps.length - 1;
-    if (curPage < 0) curPage = 0;
-    return ps[curPage];
-  }
   /* 全ページを合わせた枚数。棚の札と上の帯に出す */
+  /* 選んでいる写真が、どのページのどれか。
+     ページが縦に並ぶので、ページ番号だけでは決まらない */
+  function selOf(b) {
+    var out = null;
+    pagesOf(b).forEach(function (pg, n) {
+      (pg.cards || []).forEach(function (c, i) {
+        if (c.id === boardSel) out = { page: pg, n: n, i: i, card: c };
+      });
+    });
+    return out;
+  }
+
+  /* いま画面のまん中にいちばん近いページ。
+     縦に送って見ているので、「いま見ているページ」がそれ */
+  function shownPage(b) {
+    var ps = pagesOf(b), best = ps.length - 1, near = Infinity;
+    var mid = window.innerHeight / 2;
+    Array.prototype.forEach.call(document.querySelectorAll(".paper[data-page]"), function (el) {
+      var r = el.getBoundingClientRect();
+      var d = Math.abs((r.top + r.bottom) / 2 - mid);
+      if (d < near) { near = d; best = Number(el.getAttribute("data-page")); }
+    });
+    return ps[best] || ps[ps.length - 1];
+  }
+
   function boardCount(b) {
     var n = 0;
     pagesOf(b).forEach(function (pg) { n += (pg.cards || []).length; });
@@ -6284,7 +6304,7 @@
     var b = boardById(id);
     if (!b) return Promise.resolve();
     picking = false; picked = {};
-    screen = "board"; curBoard = id; boardSel = ""; curPage = 0;
+    screen = "board"; curBoard = id; boardSel = "";
     clearSearch();
     dropUrls(); items = [];
     return DB.all("items").then(function (all) { browseAll = all; }, function () {})
@@ -6295,75 +6315,112 @@
   function paintBoard(stage, seq) {
     var b = boardById(curBoard);
     if (!b) { goShelf(); return; }
-    var page = pageOf(b);
-    var cards = page.cards || [];
-    var need = cards.map(function (c) {
-      var it = anyItem(c.itemId);
-      return it ? (it.blobId || it.thumbId) : null;
-    }).filter(Boolean);
+    var ps = pagesOf(b);
+    var need = [];
+    ps.forEach(function (pg) {
+      (pg.cards || []).forEach(function (c) {
+        var it = anyItem(c.itemId);
+        if (it) need.push(it.blobId || it.thumbId);
+      });
+    });
 
     ensureUrls(need).then(function () {
       if (seq !== paintSeq) return;
       var sz = paperSize(b);
-      var ps = pagesOf(b);
-      var out = '<div class="boardpager" id="boardPager">'
-        + '<button id="pgPrev" aria-label="前のページ"' + (curPage <= 0 ? " disabled" : "") + ">‹</button>"
-        + '<span class="pgn">' + (curPage + 1) + " / " + ps.length + "</span>"
-        + '<button id="pgNext" aria-label="次のページ"' + (curPage >= ps.length - 1 ? " disabled" : "") + ">›</button>"
-        + '<span style="flex:1 1 auto"></span>'
-        + '<button id="pgAdd">ページを足す</button>'
-        + (ps.length > 1 ? '<button id="pgDel" class="bad">このページを消す</button>' : "")
-        + "</div>"
-        + '<div class="boardwrap">'
-        + '<div class="paper" id="paper" style="aspect-ratio:' + sz.w + "/" + sz.h + '">';
-      cards.forEach(function (c, i) {
-        var it = anyItem(c.itemId);
-        var src = it ? urlCache[it.blobId || it.thumbId] : "";
-        out += '<div class="card' + (c.id === boardSel ? " sel" : "") + '" data-card="' + esc(c.id) + '"'
-          + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
-          + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
-          + (src ? '<img src="' + src + '" alt="" draggable="false">' : '<span class="cardgone">写真がありません</span>')
-          + "</div>";
+      /* ページは縦に並べる。次のページへは、そのまま下に送るだけ */
+      var out = "";
+      ps.forEach(function (pg, n) {
+        out += '<div class="pagehead"><span>' + (n + 1) + " ページ目</span>"
+          + (ps.length > 1 ? '<button class="bad" data-pgdel="' + n + '">消す</button>' : "")
+          + "</div>"
+          + '<div class="boardwrap">'
+          + '<div class="paper" data-page="' + n + '" style="aspect-ratio:' + sz.w + "/" + sz.h + '">';
+        (pg.cards || []).forEach(function (c, i) {
+          var it = anyItem(c.itemId);
+          var src = it ? urlCache[it.blobId || it.thumbId] : "";
+          out += '<div class="card' + (c.id === boardSel ? " sel" : "") + '" data-card="' + esc(c.id) + '"'
+            + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
+            + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
+            + (src ? '<img src="' + src + '" alt="" draggable="false">' : '<span class="cardgone">写真がありません</span>')
+            + "</div>";
+        });
+        out += "</div></div>";
       });
-      out += "</div></div>"
-        + '<div class="boardtools" id="boardTools"></div>'
-        + '<div class="boardbar" id="boardBar"></div>';
+      out += '<button class="pgadd" id="pgAdd">＋ ページを足す</button>';
       stage.innerHTML = out;
+
+      ps.forEach(function (pg, n) {
+        var el = stage.querySelector('.paper[data-page="' + n + '"]');
+        if (el) { paintGrid(b, el); wireBoard(b, pg, el); }
+      });
       wirePager(b);
-      paintGrid(b);
-      wireBoard(b, page);
-      paintTools(b);
-      paintBoardBar(b);
+      paintFix(b);
     });
+  }
+
+  /* 下の帯。いつも同じ高さで、同じところに居る。
+     高さが変わると画面が跳ねるので、2行ぶんを決め打ちで取る */
+  function paintFix(b) {
+    var el = $("boardFix");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "boardfix";
+      el.id = "boardFix";
+      document.body.appendChild(el);
+    }
+    el.innerHTML = '<div class="boardtools" id="boardTools"></div>'
+      + '<div class="boardbar" id="boardBar"></div>';
+    var dock = document.querySelector(".dock");
+    var dh = dock ? Math.round(dock.getBoundingClientRect().height) : 92;
+    el.style.bottom = dh + "px";
+    paintTools(b);
+    paintBoardBar(b);
+    /* 帯の裏に紙や「ページを足す」が隠れないよう、
+       実際の高さを測って、そのぶん下を空ける */
+    var m = document.querySelector("main");
+    if (m) m.style.paddingBottom = (Math.round(el.getBoundingClientRect().height) + 16) + "px";
+  }
+  function dropFix() {
+    var el = $("boardFix");
+    if (el) el.remove();
+    var m = document.querySelector("main");
+    if (m) m.style.paddingBottom = "";
   }
 
   function wirePager(b) {
     var ps = pagesOf(b);
-    var pv = $("pgPrev"), nx = $("pgNext"), ad = $("pgAdd"), dl = $("pgDel");
-    if (pv) pv.onclick = function () { if (curPage > 0) { curPage--; boardSel = ""; paint(); } };
-    if (nx) nx.onclick = function () { if (curPage < ps.length - 1) { curPage++; boardSel = ""; paint(); } };
+    var ad = $("pgAdd");
     if (ad) ad.onclick = function () {
       ps.push({ id: uid(), cards: [] });
-      curPage = ps.length - 1; boardSel = "";
-      saveBoard(b, function () { paint(); toast(ps.length + " ページになりました"); });
-    };
-    if (dl) dl.onclick = function () {
-      askYesNo({
-        title: (curPage + 1) + " ページ目を消す",
-        body: "このページに貼ってあるものだけを消します。写真そのものはフォルダに残ります。",
-        ok: "消す"
-      }, function () {
-        ps.splice(curPage, 1);
-        if (curPage >= ps.length) curPage = ps.length - 1;
-        boardSel = "";
-        saveBoard(b, function () { paint(); toast("消しました"); });
+      boardSel = "";
+      saveBoard(b, function () {
+        paint();
+        /* 足したページまで送る。下にできたものを探させない */
+        setTimeout(function () {
+          var el = document.querySelector('.paper[data-page="' + (ps.length - 1) + '"]');
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 60);
+        toast(ps.length + " ページになりました");
       });
     };
+    Array.prototype.forEach.call(document.querySelectorAll("[data-pgdel]"), function (bt) {
+      bt.onclick = function () {
+        var n = Number(bt.getAttribute("data-pgdel"));
+        askYesNo({
+          title: (n + 1) + " ページ目を消す",
+          body: "このページに貼ってあるものだけを消します。写真そのものはフォルダに残ります。",
+          ok: "消す"
+        }, function () {
+          ps.splice(n, 1);
+          boardSel = "";
+          saveBoard(b, function () { paint(); toast("消しました"); });
+        });
+      };
+    });
   }
 
   /* 目安の線は紙の背景として描く。書き出した絵には出ない */
-  function paintGrid(b) {
-    var paper = $("paper");
+  function paintGrid(b, paper) {
     if (!paper) return;
     var g = b.grid || "";
     if (!g) { paper.style.backgroundImage = ""; return; }
@@ -6385,6 +6442,11 @@
     paper.style.backgroundSize = size.join(",");
   }
 
+  function allPapers() { return document.querySelectorAll(".paper[data-page]"); }
+  function paintGrids(b) {
+    Array.prototype.forEach.call(allPapers(), function (el) { paintGrid(b, el); });
+  }
+
   function paintTools(b) {
     var el = $("boardTools");
     if (!el) return;
@@ -6394,32 +6456,31 @@
       + esc(now.name) + "</button>"
       + '<button id="bdSnap" aria-pressed="' + (!!b.snap) + '">吸い付き</button>'
       + '<span style="flex:1 1 auto"></span>'
-      + '<button id="bdOut">1枚の画像にする</button>'
       + '<button id="bdPdf" class="go">PDFにする</button>';
     /* 押すたびに、線なし→縦→横→格子と回る。1タップで変えられる */
     $("bdGrid").onclick = function () {
       var i = 0;
       GRIDS.forEach(function (x, n) { if (x.k === g) i = n; });
       b.grid = GRIDS[(i + 1) % GRIDS.length].k;
-      saveBoard(b, function () { paintGrid(b); paintTools(b); });
+      saveBoard(b, function () { paintGrids(b); paintTools(b); });
     };
     $("bdSnap").onclick = function () {
       b.snap = !b.snap;
       saveBoard(b, function () { paintTools(b); toast(b.snap ? "線に吸い付きます" : "吸い付きをやめました"); });
     };
-    $("bdOut").onclick = function () { boardOut(b); };
-    $("bdPdf").onclick = function () { boardPdf(b); };
+    $("bdPdf").onclick = function () { pdfSheet(b); };
   }
 
   function paintBoardBar(b) {
     var bar = $("boardBar");
     if (!bar) return;
-    var c = (pageOf(b).cards || []).filter(function (x) { return x.id === boardSel; })[0];
+    var hit = selOf(b), c = hit && hit.card;
     bar.innerHTML = c
       ? '<button data-bd="back">うしろへ</button>'
         + '<button data-bd="front">まえへ</button>'
-        + '<button data-bd="left">左へ回す</button>'
-        + '<button data-bd="right">右へ回す</button>'
+        /* 回すのは記号にする。文字にすると帯に収まらず、端が切れる */
+        + '<button data-bd="left" class="turn" aria-label="左へ回す" title="左へ回す">↺</button>'
+        + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
@@ -6428,10 +6489,9 @@
   }
 
   function boardAct(b, k) {
-    var page = pageOf(b), i = -1;
-    (page.cards || []).forEach(function (c, n) { if (c.id === boardSel) i = n; });
-    if (i < 0) return;
-    var c = page.cards[i];
+    var hit = selOf(b);
+    if (!hit) return;
+    var page = hit.page, i = hit.i, c = hit.card;
     if (k === "off") { page.cards.splice(i, 1); boardSel = ""; }
     else if (k === "front") { page.cards.splice(i, 1); page.cards.push(c); }
     else if (k === "back") { page.cards.splice(i, 1); page.cards.unshift(c); }
@@ -6441,8 +6501,7 @@
   }
 
   /* 指で動かす・つまんで大きさと傾きを変える */
-  function wireBoard(b, page) {
-    var paper = $("paper");
+  function wireBoard(b, page, paper) {
     if (!paper) return;
     var pts = {}, n = 0, node = null, card = null;
     var start = null, moved = false;
@@ -6579,27 +6638,6 @@
     });
   }
 
-  /* いま開いているページを1枚の画像にする */
-  function boardOut(b) {
-    var page = pageOf(b);
-    if (!(page.cards || []).length) { toast("このページにはまだ写真がありません。", true); return; }
-    progress(5);
-    toast("1枚にまとめています…");
-    renderPage(b, page, function (i, n) { progress(5 + Math.round((i / n) * 85)); })
-      .then(function (cv) {
-        progress(93);
-        return toJpeg(cv).then(function (blob) {
-          var ps = pagesOf(b);
-          var nm = "v1_" + safeName(b.name)
-            + (ps.length > 1 ? "_" + (curPage + 1) + "ページ" : "") + "_ボード.jpg";
-          return handOver(blob, nm).then(function (how) {
-            progress(100);
-            if (how !== "cancel") toast("1枚にしました（" + cv.width + "×" + cv.height + "・" + mb(blob.size) + "）");
-          });
-        });
-      }).catch(function (e) { progress(100); toast(why(e), true); });
-  }
-
   /* ============================================================
      小さなPDF書き
      ------------------------------------------------------------
@@ -6649,9 +6687,50 @@
     return new Blob(chunks, { type: "application/pdf" });
   }
 
-  /* 全ページを1冊のPDFにする */
-  function boardPdf(b) {
-    var ps = pagesOf(b).filter(function (pg) { return (pg.cards || []).length; });
+  /* どのページを出すか選んでから作る。
+     1ページだけでも、まとめてでも、出てくるものはPDFひとつ */
+  function pdfSheet(b) {
+    var ps = pagesOf(b);
+    var live = [];
+    ps.forEach(function (pg, n) { if ((pg.cards || []).length) live.push(n); });
+    if (!live.length) { toast("まだ写真を貼っていません。", true); return; }
+    /* 選べるものが1つしかないなら、聞かずに作る */
+    if (live.length === 1) { boardPdf(b, live.slice()); return; }
+
+    sheet('<div class="panel-head"><h3>PDFにする</h3>'
+      + '<button class="iconbtn" id="pfNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + (live.length > 1
+          ? '<button class="rowbtn" data-pf="all"><div><b>ぜんぶ</b>'
+            + "<span>" + live.length + " ページを1冊にまとめます</span></div>"
+            + '<svg><use href="#i-book"/></svg></button>'
+          : "")
+      + live.map(function (n) {
+          return '<button class="rowbtn" data-pf="' + n + '"><div><b>' + (n + 1) + " ページ目だけ</b>"
+            + "<span>" + ((ps[n].cards || []).length) + " 枚</span></div>"
+            + '<svg><use href="#i-doc"/></svg></button>';
+        }).join("")
+      + '<div class="hintline">紙の大きさは ' + esc(paperName(b)) + " のまま出ます。"
+      + "iPhoneなら、出てきたPDFの共有からそのまま印刷できます。</div>"
+      + "</div></div>", "dialog");
+
+    $("pfNo").onclick = closeSheet;
+    Array.prototype.forEach.call($("panel").querySelectorAll("[data-pf]"), function (bt) {
+      bt.onclick = function () {
+        var v = bt.getAttribute("data-pf");
+        closeSheet();
+        boardPdf(b, v === "all" ? null : [Number(v)]);
+      };
+    });
+  }
+
+  /* 選んだページを1冊のPDFにする。only を渡さなければ全部 */
+  function boardPdf(b, only) {
+    var all = pagesOf(b);
+    var ps = all.filter(function (pg, n) {
+      if (!(pg.cards || []).length) return false;
+      return !only || only.indexOf(n) >= 0;
+    });
     if (!ps.length) { toast("まだ写真を貼っていません。", true); return; }
     var sz = paperSize(b);
     /* PDFの寸法はポイント。1インチ72ポイント */
@@ -6664,7 +6743,9 @@
         progress(94);
         try {
           var blob = pdfWrite(out);
-          handOver(blob, "v1_" + safeName(b.name) + "_ボード.pdf").then(function (how) {
+          var nm = "v1_" + safeName(b.name)
+            + (only ? "_" + (only[0] + 1) + "ページ" : "") + "_ボード.pdf";
+          handOver(blob, nm).then(function (how) {
             progress(100);
             if (how !== "cancel") toast("1冊にしました（" + ps.length + "ページ・" + mb(blob.size) + "）");
           }).catch(function (e) { progress(100); toast(why(e), true); });
@@ -6751,8 +6832,9 @@
       $("bpOk").onclick = function () {
         var ids = Object.keys(take);
         if (!ids.length) { closeSheet(); return; }
-        /* まん中あたりから、少しずつずらして重ねて置く */
-        var page = pageOf(b);
+        /* まん中あたりから、少しずつずらして重ねて置く。
+           入れ先は、いま画面に見えているページ */
+        var page = shownPage(b);
         var k = (page.cards || []).length;
         ids.forEach(function (id, i) {
           var step = (k + i) % 8;
