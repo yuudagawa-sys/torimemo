@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "54";
+  var APPVER = "55";
 
   /* ============================================================
      小道具
@@ -502,7 +502,7 @@
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
-        throw new Error("ログインが切れました。設定のアカウントから、もう一度ログインしてください。");
+        throw new Error("ログインが切れました。画面の左上の丸から、もう一度ログインしてください。");
       }
       if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
       return r.status === 204 ? null : r.json();
@@ -1025,6 +1025,7 @@
       return DB.all("items").then(function (all) { browseAll = all; }, function () { browseAll = []; });
     }).then(function () {
       paint();
+      paintMe();
       loadSkin();
       gauge();
       askPersist();
@@ -1348,6 +1349,25 @@
       else if (col) el.style.background = col;
       else el.style.background = "";
     });
+  }
+
+  /* アカウントの丸。ログインしていれば頭文字、していなければ人の形。
+     Googleとのやりとりは、ここを押せば全部ある */
+  function paintMe() {
+    var el = $("meBtn");
+    if (!el) return;
+    var who = Shelf.linked() ? Shelf.who() : "";
+    if (Shelf.linked()) {
+      var head = (who || "?").trim().charAt(0).toUpperCase();
+      el.className = "me on";
+      el.textContent = /[A-Za-z0-9]/.test(head) ? head : "●";
+      el.setAttribute("aria-label", "アカウント（" + (who || "ログイン中") + "）");
+    } else {
+      el.className = "me";
+      el.innerHTML = '<svg><use href="#i-me"/></svg>';
+      el.setAttribute("aria-label", "Googleでログイン");
+    }
+    el.onclick = teamSheet;
   }
 
   function paintBanner() {
@@ -1967,6 +1987,18 @@
     box._itemwired = true;
     var timer = null, sx = 0, sy = 0, held = false, id = null, node = null, drag = null;
 
+    /* 長押しや並べ替えのあとに続くクリックを、1回だけ飲み込む。
+       飲み込む約束を held で代用していたせいで、並べ替えのあと
+       クリックが来ないときに held が立ったまま残り、
+       次に押した1回（別の画面のフォルダなど）が消えていた。
+       来なければ、すぐに忘れる */
+    var eat = false, eatTimer = null;
+    function eatClick() {
+      eat = true;
+      clearTimeout(eatTimer);
+      eatTimer = setTimeout(function () { eat = false; }, 400);
+    }
+
     function lift(n) {
       n.classList.add("lifted");
       if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
@@ -2008,10 +2040,13 @@
     ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
       box.addEventListener(k, function (e) {
         clearTimeout(timer);
-        if (drag) { var d = drag; drag = null; drop(); d.end(); return; }
-        if (held && k === "pointerup") {
+        var was = held;
+        held = false;
+        if (drag) { var d = drag; drag = null; drop(); eatClick(); d.end(); return; }
+        if (was && k === "pointerup") {
           /* 動かさずに離した → これまで通り「選ぶ」に入る */
           drop();
+          eatClick();
           if (!picking) { picking = true; picked = {}; }
           picked[id] = true;
           paintStage();
@@ -2021,10 +2056,11 @@
       });
     });
 
-    /* 長押しのあとに続くクリックは飲み込む */
+    /* 長押し・並べ替えのあとに続くクリックは飲み込む */
     box.addEventListener("click", function (e) {
-      if (!held) return;
-      held = false;
+      if (!eat) return;
+      eat = false;
+      clearTimeout(eatTimer);
       e.preventDefault(); e.stopPropagation();
     }, true);
     box.addEventListener("contextmenu", function (e) {
@@ -5311,6 +5347,7 @@
         say("Googleの画面を開いています…");
         Shelf.link().then(function () {
           toast("ログインしました");
+          paintMe();
           paintTeam();
         }).catch(function (e) { say(why(e), true); });
       };
@@ -5343,7 +5380,7 @@
         }).join("")
           + (list.length < 2
               ? '<div class="hintline">ほかの端末はまだログインしていません。'
-                + "その端末でも、設定の<b>アカウント</b>から同じGoogleアカウントにログインしてください。</div>"
+                + "その端末でも、画面の<b>左上の丸</b>から同じGoogleアカウントにログインしてください。</div>"
               : "");
       }).catch(function (e) {
         if ($("tmWho")) $("tmWho").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
@@ -5406,7 +5443,7 @@
 
       var off = $("tmOff");
       if (off) off.onclick = function () {
-        Shelf.unlink().then(function () { toast("ログアウトしました"); paintTeam(); });
+        Shelf.unlink().then(function () { toast("ログアウトしました"); paintMe(); paintTeam(); });
       };
 
       var t = $("tmTest");
@@ -5437,7 +5474,9 @@
     if (Shelf.linked()) {
       var had = Shelf.who();
       Shelf.refresh().then(function (n) {
-        if (n !== had && $("tmSay")) paintTeam();
+        if (n === had) return;
+        paintMe();
+        if ($("tmSay")) paintTeam();
       }).catch(function () {});
     }
   }
@@ -5481,7 +5520,7 @@
           + "<p>★を付けたものだけを並べることもできます。</p>")
 
       + qa("iPhoneとパソコンで同じ中身にする",
-          "<p>使う端末それぞれで、設定 → <b>アカウント</b> から同じGoogleアカウントにログインします。"
+          "<p>使う端末それぞれで、画面の<b>左上の丸</b>から同じGoogleアカウントにログインします。"
           + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、Rawpoのサーバーは通りません。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
           + "手で合わせたいときは「いますぐ同期」を押します。</p>"
@@ -5507,9 +5546,9 @@
           "<p><b>新しい版が来ない</b><br>アプリをいったん完全に閉じて、開き直してください。"
           + "いまの版は、この設定画面の見出しの横に出ています（v" + esc(APPVER) + "）。</p>"
           + "<p><b>「ログインが切れました」と出た</b><br>合鍵の期限が切れただけです。"
-          + "設定 → アカウント から、もう一度ログインすれば直ります。</p>"
+          + "左上の丸から、もう一度ログインすれば直ります。</p>"
           + "<p><b>片方の端末にだけ出てこない</b><br>その端末がまだログインしていない可能性があります。"
-          + "設定 → アカウント を開くと、いまログインしている端末が並びます。"
+          + "左上の丸を押すと、いまログインしている端末が並びます。"
           + "そこに出てこない端末では、ログインしてください。</p>"
           + "<p><b>一緒に使う人がログインできない</b><br>いまはお試しの段階で、"
           + "Google側に登録した人しか使えません。その人のGmailを登録する必要があります。</p>"
@@ -5538,12 +5577,6 @@
       + '<span class="ver">v' + esc(APPVER) + "</span></h3>"
       + '<button class="iconbtn" id="sClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
-      + '<button class="rowbtn" id="sTeam"><div><b>'
-      + (Shelf.linked() ? "アカウント" : "Googleでログイン") + "</b>"
-      + "<span>" + (Shelf.linked()
-          ? (esc(Shelf.who() || "ログイン中") + "・最後に同期したのは " + whenTxt(recall("syncAt")))
-          : "ログインすると、iPhone・パソコンで同じ中身になります") + "</span></div>"
-      + '<svg><use href="#i-sync"/></svg></button>'
       + '<button class="rowbtn" id="sNew"><div><b>新しく作る</b>'
       + '<span>テンプレートを選んで、フォルダを1つ作ります</span></div><svg><use href="#i-plus"/></svg></button>'
       + (screen === "folder" ? '<button class="rowbtn" id="sExport"><div><b>このフォルダを共有する</b><span>AirDrop・LINE・メールへ。端末の共有シートが開きます</span></div><svg><use href="#i-share"/></svg></button>' : "")
@@ -5594,7 +5627,6 @@
     $("sHelp").onclick = helpSheet;
     $("sLook").onclick = lookDialog;
     $("sAd").onclick = function () { closeSheet(); removeAdsDialog(); };
-    $("sTeam").onclick = teamSheet;
     $("sTags").onclick = function () {
       tagSheet(screen === "folder" ? "folder" : "shelf");
     };
