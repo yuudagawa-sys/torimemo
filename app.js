@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "65";
+  var APPVER = "66";
 
   /* ============================================================
      小道具
@@ -567,23 +567,64 @@
       }).then(function (r) { return r.id; });
     },
 
-    /* Rawpo の置き場所。無ければ作り、番号を覚えておく。
-       覚えていても捨てられている場合があるので、毎回確かめる */
+    /* 名前が「Rawpo」のフォルダを、古い順に全部。
+       二台が別々に初めて使うと、それぞれが自分のフォルダを作ってしまう。
+       そうなると片方の記録がもう片方から一生見えないので、
+       どの端末も「いちばん古いもの」に寄せる決まりにしてある */
+    roots: function () {
+      var q = encodeURIComponent(
+        "mimeType='application/vnd.google-apps.folder' and name='Rawpo' and trashed=false");
+      var f = encodeURIComponent("files(id,createdTime)");
+      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&orderBy=createdTime&pageSize=100")
+        .then(function (r) { return r.files || []; });
+    },
+
+    /* Rawpo の置き場所。無ければ作る。
+       番号は控えるが、控えを頼りにはしない。毎回いちばん古いものを見にいく。
+       控えだけで動かしていたせいで、二つのフォルダに分かれたまま
+       どちらの端末も気づけない、ということが起きていた */
     root: function () {
       var had = recall("driveRoot");
-      function fresh() {
-        var q = encodeURIComponent(
-          "mimeType='application/vnd.google-apps.folder' and name='Rawpo' and trashed=false");
-        return gCall(DRIVE + "?q=" + q + "&fields=files(id)&pageSize=10").then(function (r) {
-          if (r.files && r.files.length) { remember("driveRoot", r.files[0].id); return r.files[0].id; }
-          return Shelf.newRoom("Rawpo").then(function (id) { remember("driveRoot", id); return id; });
+      function born() {
+        return Shelf.newRoom("Rawpo").then(function (id) {
+          remember("driveRoot", id);
+          return id;
         });
       }
-      if (!had) return fresh();
-      return gCall(DRIVE + "/" + had + "?fields=id,trashed").then(function (r) {
-        if (r && r.id && !r.trashed) return r.id;
-        throw new Error("消えています");
-      }).catch(function () { remember("driveRoot", ""); return fresh(); });
+      return Shelf.roots().then(function (files) {
+        if (files.length) {
+          var id = files[0].id;
+          /* 前と違うフォルダに移るときは、送った控えを忘れる。
+             前の置き場に送った記録は、新しい置き場には無い */
+          if (had && had !== id) placeChanged();
+          remember("driveRoot", id);
+          return id;
+        }
+        if (!had) return born();
+        /* 探して出てこないのに控えがある。捨てられたのか、
+           たまたま返らなかったのか。確かめてから作り直す */
+        return gCall(DRIVE + "/" + had + "?fields=id,trashed").then(function (r) {
+          if (r && r.id && !r.trashed) return r.id;
+          throw new Error("消えています");
+        }).catch(function () { remember("driveRoot", ""); return born(); });
+      }, function (e) {
+        /* 一覧が引けないだけなら、控えで続ける */
+        if (had) return had;
+        throw e;
+      });
+    },
+
+    /* 中にある同じ名前のフォルダを、古い順に全部。作りはしない。
+       いつの間にか二つできていることがあり、片方にだけ
+       入っているものが見えなくなるのを防ぐために使う */
+    rooms: function (parentId, name) {
+      var q = encodeURIComponent("'" + parentId + "' in parents and mimeType='application/vnd.google-apps.folder'"
+        + " and name='" + String(name).replace(/'/g, "\\'") + "' and trashed=false");
+      var f = encodeURIComponent("files(id,createdTime)");
+      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&orderBy=createdTime&pageSize=100")
+        .then(function (r) {
+          return (r.files || []).map(function (x) { return x.id; });
+        });
     },
 
     /* 中にフォルダを1つ。すでにあれば作らない。
@@ -591,7 +632,8 @@
     room: function (parentId, name) {
       var q = encodeURIComponent("'" + parentId + "' in parents and mimeType='application/vnd.google-apps.folder'"
         + " and name='" + String(name).replace(/'/g, "\\'") + "' and trashed=false");
-      return gCall(DRIVE + "?q=" + q + "&fields=files(id)&pageSize=10").then(function (r) {
+      return gCall(DRIVE + "?q=" + q + "&fields=files(id)&orderBy=createdTime&pageSize=10").then(function (r) {
+        /* 同じ名前が二つあっても、どの端末も古いほうを選ぶ */
         if (r.files && r.files.length) return r.files[0].id;
         return gCall(DRIVE + "?fields=id", {
           method: "POST",
@@ -609,8 +651,8 @@
     find: function (roomId, name) {
       var q = encodeURIComponent("'" + roomId + "' in parents and name='"
         + String(name).replace(/'/g, "\\'") + "' and trashed=false");
-      var f = encodeURIComponent("files(id,name,size,modifiedTime)");
-      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=10")
+      var f = encodeURIComponent("files(id,name,size,modifiedTime,createdTime)");
+      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&orderBy=createdTime&pageSize=10")
         .then(function (r) { return (r.files || [])[0] || null; });
     },
 
@@ -665,6 +707,20 @@
         });
       }
       return page(null);
+    },
+
+    /* いくつかのフォルダの中身を、まとめて並べる。
+       同じ名前のフォルダが二つあるときは、両方を見る */
+    listMany: function (ids) {
+      var out = [];
+      function step(i) {
+        if (i >= ids.length) return Promise.resolve(out);
+        return Shelf.list(ids[i]).then(function (rows) {
+          rows.forEach(function (r) { out.push(r); });
+          return step(i + 1);
+        });
+      }
+      return step(0);
     },
 
     drop: function (fileId) {
@@ -5107,18 +5163,81 @@
   }
 
   var syncRooms = null;   /* 置き場の番号。一度引いたら使い回す */
+
+  /* 「ここまで送った」「ここまで読んだ」の控えを全部忘れる。
+     置き場が変わったときに呼ぶ。新しい置き場には何も無いので、
+     控えを信じると、送ったつもりのものが誰にも届かない */
+  function forgetSync() {
+    remember("sentUpTo", "0");
+    remember("sentAt", "");
+    try {
+      var kill = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf("expo.seen:") === 0) kill.push(k);
+      }
+      kill.forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) {}
+  }
+  function placeChanged() {
+    syncRooms = null;
+    forgetSync();
+  }
+  /* 同じ名前のフォルダが二つできてしまっていることがある。
+     書くのはいちばん古い一つだけ。読むときは全部見る。
+     片方に取り残されたものが、ずっと見えないままにならないように */
+  function roomsOf(parentId, name) {
+    return Shelf.rooms(parentId, name).then(function (ids) {
+      if (ids.length) return ids;
+      return Shelf.room(parentId, name).then(function (id) { return [id]; });
+    });
+  }
   function syncPlace() {
     if (syncRooms) return Promise.resolve(syncRooms);
     return Shelf.root().then(function (root) {
-      return Shelf.room(root, "同期").then(function (sync) {
-        return Shelf.room(sync, "中身").then(function (parts) {
-          syncRooms = { root: root, sync: sync, parts: parts };
+      return roomsOf(root, "同期").then(function (syncs) {
+        /* 「中身」は、どの「同期」の下にもあり得る */
+        return Promise.all(syncs.map(function (s) { return Shelf.rooms(s, "中身"); })).then(function (lists) {
+          var parts = [];
+          lists.forEach(function (l) { l.forEach(function (id) { parts.push(id); }); });
+          if (parts.length) return parts;
+          return Shelf.room(syncs[0], "中身").then(function (id) { return [id]; });
+        }).then(function (parts) {
+          syncRooms = { root: root, sync: syncs[0], parts: parts[0],
+                        syncs: syncs, partsAll: parts };
           return syncRooms;
         });
       });
     });
   }
   function myIndexName() { return devId() + ".json"; }
+
+  /* 置き場を調べる。片方だけそろわないときに、二台が同じところを
+     見ているのかどうかを、その場で確かめられるようにしておく。
+     ここが食い違っていれば、原因はまず置き場 */
+  function probePlace() {
+    var out = { roots: 0, root: "", rooms: 1, bins: 1, parts: 0, devs: [] };
+    return hush(function () {
+      return Shelf.roots().then(function (files) {
+        out.roots = files.length;
+        return syncPlace();
+      }).then(function (p) {
+        out.root = p.root;
+        out.rooms = p.syncs.length;
+        out.bins = p.partsAll.length;
+        return Shelf.listMany(p.syncs).then(function (rows) {
+          out.devs = rows.filter(function (f) { return /\.json$/.test(f.name); })
+            .map(function (f) {
+              return { dev: f.name.replace(/\.json$/, ""), at: f.at, size: f.size };
+            }).sort(function (a, b) { return b.at - a.at; });
+          return Shelf.listMany(p.partsAll);
+        });
+      }).then(function (rows) {
+        out.parts = rows.length;
+        return out;
+      });
+    });
+  }
 
   /* 端末の番号と呼び名の対応。受け取ったときに書き足していく。
      ドライブのファイル名は番号なので、これが無いと誰のものか分からない */
@@ -5137,7 +5256,7 @@
      ここに出てこない端末は、まだログインしていない */
   function devicesOnDrive() {
     return hush(function () {
-      return syncPlace().then(function (p) { return Shelf.list(p.sync); });
+      return syncPlace().then(function (p) { return Shelf.listMany(p.syncs); });
     }).then(function (rows) {
       var me = myIndexName(), names = devNames();
       return rows.filter(function (f) { return /\.json$/.test(f.name); })
@@ -5190,27 +5309,20 @@
       rec = r;
       changed = newestAt(rec) > Number(recall("sentUpTo") || 0);
       progress(8);
-      return Shelf.list(place.parts);
+      return Shelf.listMany(place.partsAll);
     }).then(function (rows) {
       var there = {};
       rows.forEach(function (f) { there[f.name] = 1; });
       need = partIds(rec.items).filter(function (id) { return !there[id]; });
       if (!changed && !need.length) return "same";
-      if (!need.length) return null;
-      stoast("写真を送っています…（" + need.length + "件）");
-      var i = 0;
-      return (function next() {
-        if (i >= need.length) return Promise.resolve(null);
-        var id = need[i++];
-        progress(8 + Math.round((i / need.length) * 36));
-        return DB.get("blobs", id).then(function (b) {
-          if (!b || !b.blob) return null;
-          return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
-        }).catch(function () { return null; }).then(next);
-      })();
-    }).then(function (how) {
-      if (how === "same") return "same";
-      progress(46);
+
+      /* 記録を先に置き、写真はあとから送る。
+         写真が何十枚もあると送り終わるまでに何分もかかる。
+         先に写真を送っていたせいで、途中で画面を閉じたり通信が切れたりすると
+         記録が一度も置かれず、ほかの端末からはこの端末が
+         「まだログインしていない」ように見えていた。
+         記録だけなら数十キロなので、まず確実に置いてしまう */
+      progress(12);
       stoast("記録を送っています…");
       var body = JSON.stringify({
         v: 1, dev: devId(), name: deviceName(), at: Date.now(),
@@ -5218,11 +5330,24 @@
         templates: rec.templates, boards: rec.boards, gone: rec.gone
       });
       return Shelf.save(place.sync, myIndexName(),
-        new Blob([body], { type: "application/json" })).then(function () { return null; });
+        new Blob([body], { type: "application/json" })).then(function () {
+        remember("sentAt", String(Date.now()));
+        remember("sentUpTo", String(newestAt(rec)));
+        if (!need.length) return null;
+        stoast("写真を送っています…（" + need.length + "件）");
+        var i = 0;
+        return (function next() {
+          if (i >= need.length) return Promise.resolve(null);
+          var id = need[i++];
+          progress(16 + Math.round((i / need.length) * 30));
+          return DB.get("blobs", id).then(function (b) {
+            if (!b || !b.blob) return null;
+            return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
+          }).catch(function () { return null; }).then(next);
+        })();
+      });
     }).then(function (how) {
       if (how === "same") return { same: true, sent: 0 };
-      remember("sentAt", String(Date.now()));
-      remember("sentUpTo", String(newestAt(rec)));
       return { same: false, sent: sent };
     });
   }
@@ -5255,7 +5380,7 @@
 
   /* 届いた記録を、いまの中身に合わせる。写真の取り寄せまでやる */
   function applyIndexes(list, place) {
-    var out = { add: 0, upd: 0, del: 0, got: 0 };
+    var out = { add: 0, upd: 0, del: 0, got: 0, miss: 0 };
     var mine = {}, kept = null, lost = [];
     return myRecords().then(function (here) {
       SYNCED.forEach(function (st) {
@@ -5338,7 +5463,7 @@
         if (it.thumbId) type[it.thumbId] = "image/jpeg";
         if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
       });
-      return Shelf.list(place.parts).then(function (rows) {
+      return Shelf.listMany(place.partsAll).then(function (rows) {
         var at = {};
         rows.forEach(function (f) { at[f.name] = f.fileId; });
         var i = 0;
@@ -5346,10 +5471,13 @@
           if (i >= need.length) return Promise.resolve(null);
           var id = need[i++];
           progress(74 + Math.round((i / need.length) * 22));
-          if (!at[id]) return Promise.resolve().then(next);
+          /* 向こうがまだ写真を上げ終わっていないことがある。
+             数えておいて、あとでもう一度降ろしにくる */
+          if (!at[id]) { out.miss++; return Promise.resolve().then(next); }
           return Shelf.get(at[id]).then(function (b) {
             return DB.putRaw("blobs", { id: id, blob: new Blob([b], { type: type[id] || b.type }) });
-          }).then(function () { out.got++; }).catch(function () {}).then(next);
+          }).then(function () { out.got++; })
+            .catch(function () { out.miss++; }).then(next);
         })();
       });
     }).then(function () {
@@ -5362,7 +5490,7 @@
     progress(50);
     return syncPlace().then(function (p) {
       place = p;
-      return Shelf.list(p.sync);
+      return Shelf.listMany(p.syncs);
     }).then(function (rows) {
       var others = rows.filter(function (f) {
         if (!/\.json$/.test(f.name) || f.name === mine) return false;
@@ -5393,10 +5521,13 @@
       if (!box || !box.length) return "none";
       return applyIndexes(box, place);
     }).then(function (out) {
-      if (out === "none") return { none: true, add: 0, upd: 0, del: 0, got: 0 };
+      if (out === "none") return { none: true, add: 0, upd: 0, del: 0, got: 0, miss: 0 };
       remember("tookAt", String(Date.now()));
-      /* ここまで無事に済んでから控える。途中で切れたら、次にまた降ろす */
-      fresh.forEach(function (f) { remember("seen:" + f.name, String(f.at)); });
+      /* ここまで無事に済んでから控える。途中で切れたら、次にまた降ろす。
+         写真が1枚でも取り寄せられていないときは控えない。
+         控えてしまうと「変わっていない」と見なして二度と降ろしにいかず、
+         その写真はずっと出てこないままになる */
+      if (!out.miss) fresh.forEach(function (f) { remember("seen:" + f.name, String(f.at)); });
       return reloadAll().then(function () { return out; });
     });
   }
@@ -5422,9 +5553,11 @@
       if (down.add) said.push("新しく " + down.add + "件");
       if (down.upd) said.push("直し " + down.upd + "件");
       if (down.del) said.push("消し " + down.del + "件");
+      if (down.got) said.push("写真 " + down.got + "件を受け取りました");
+      if (down.miss) said.push("写真 " + down.miss + "件はまだ向こうが送り終わっていません");
       /* 裏で5分おきに回っているときは、何か増えたときだけ知らせる。
          自分の記録を置き直しただけで毎回しゃべられると、うるさい */
-      var worth = up.sent || down.add || down.upd || down.del;
+      var worth = up.sent || down.add || down.upd || down.del || down.got;
       if (!quietSync) toast(said.length ? ("同期しました（" + said.join(" ・ ") + "）") : "変わったものはありませんでした");
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
       unsent = false;
@@ -5531,6 +5664,11 @@
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
+          + '<button class="rowbtn" id="tmProbe"><div><b>置き場を調べる</b>'
+          + "<span>ドライブのどこを見ているか、何が置かれているかを出します。"
+          + "片方の端末だけそろわないときに、二台で見比べてください</span></div>"
+          + '<svg><use href="#i-help"/></svg></button>'
+          + '<div id="tmProbeOut"></div>'
           + '<button class="danger" id="tmOff">ログアウト</button>'
         : '<button class="rowbtn" id="tmOn"><div><b>Googleでログイン</b>'
           + "<span>この端末を、ほかの端末と同じ中身にします。"
@@ -5659,6 +5797,40 @@
         }).catch(function (e) { box.innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>"; });
       };
 
+      var pb = $("tmProbe");
+      if (pb) pb.onclick = function () {
+        var box = $("tmProbeOut");
+        if (!box) return;
+        box.innerHTML = '<div class="saveflag">調べています…</div>';
+        probePlace().then(function (r) {
+          if (!$("tmProbeOut")) return;
+          var names = devNames();
+          $("tmProbeOut").innerHTML = '<div class="qabody" style="margin-top:6px">'
+            + "<p>この端末の札：<b>" + esc(devId()) + "</b>（" + esc(deviceName()) + "）</p>"
+            + "<p>アカウント：<b>" + esc(Shelf.who() || "不明") + "</b></p>"
+            + "<p>「Rawpo」フォルダの数：<b>" + r.roots + "</b>"
+            + (r.roots > 1 ? "　← 二つ以上あります。いちばん古いほうを使います" : "")
+            + "</p>"
+            + "<p>使っているフォルダ：<b>" + esc(String(r.root).slice(0, 8)) + "…</b></p>"
+            + "<p>「同期」フォルダの数：<b>" + r.rooms + "</b>"
+            + "　／　「中身」フォルダの数：<b>" + r.bins + "</b>"
+            + (r.rooms > 1 || r.bins > 1 ? "　← 重なっていますが、両方から読んでいます" : "")
+            + "</p>"
+            + "<p>置かれている記録：<b>" + r.devs.length + "台</b></p>"
+            + (r.devs.length
+                ? "<ul>" + r.devs.map(function (d) {
+                    return "<li>" + esc(names[d.dev] || (d.dev === devId() ? deviceName() : "別の端末"))
+                      + "（" + esc(d.dev) + "）・" + whenTxt(d.at) + "・" + mb(d.size) + "</li>";
+                  }).join("") + "</ul>"
+                : "")
+            + "<p>置かれている写真の数：<b>" + r.parts + "</b></p>"
+            + "</div>";
+        }).catch(function (e) {
+          if ($("tmProbeOut")) $("tmProbeOut").innerHTML =
+            '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
+        });
+      };
+
       var off = $("tmOff");
       if (off) off.onclick = function () {
         Shelf.unlink().then(function () { toast("ログアウトしました"); paintMe(); paintTeam(); });
@@ -5767,7 +5939,13 @@
           + "下の右端にある丸から、もう一度ログインすれば直ります。</p>"
           + "<p><b>片方の端末にだけ出てこない</b><br>その端末がまだログインしていない可能性があります。"
           + "下の右端にある丸を押すと、いまログインしている端末が並びます。"
-          + "そこに出てこない端末では、ログインしてください。</p>"
+          + "そこに出てこない端末では、ログインして「いますぐ同期」を一度押してください。</p>"
+          + "<p><b>ログインしているのに、相手の端末が出てこない</b><br>"
+          + "下の右端にある丸 → <b>置き場を調べる</b>を、両方の端末で押して見比べてください。"
+          + "「使っているフォルダ」が同じなら、あとは同期を押すだけでそろいます。"
+          + "違っていても、もう一度同期すれば、古いほうのフォルダに自動でそろいます。</p>"
+          + "<p><b>写真のところが空のまま</b><br>相手の端末が、まだ写真を送り終わっていません。"
+          + "相手の端末でRawpoを開いたままにしておくと送り終わり、次の同期で届きます。</p>"
           + "<p><b>一緒に使う人がログインできない</b><br>いまはお試しの段階で、"
           + "Google側に登録した人しか使えません。その人のGmailを登録する必要があります。</p>"
           + "<p><b>容量が気になる</b><br>設定の<b>端末の使用量</b>で見られます。"
