@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "67";
+  var APPVER = "68";
 
   /* ============================================================
      小道具
@@ -68,6 +68,11 @@
       return "この画面では保存が許可されていません（" + e.name + "）。アプリとして開き直すと解決します。";
     }
     var m = e.message || String(e);
+    /* 黙って合鍵を取り直せなかったときの合図。中の言葉なので、
+       そのまま出すと「quiet」とだけ表示されてしまう */
+    if (m === "quiet") {
+      return "Googleとつながりませんでした。下の右端にある丸から、もう一度ログインしてください。";
+    }
     if (e.name && e.name !== "Error" && m.indexOf(e.name) < 0) m += "（" + e.name + "）";
     return m;
   }
@@ -450,10 +455,22 @@
 
   /* quiet を true にすると、許可画面を出さずに合鍵だけ取り直す。
      一度つないだ人が、次に開いたときに何も押さずに済むように */
+  /* 黙って取り直すとき、Googleから返事が来ないことがある。
+     iPhoneをアプリとして開いているときに起きやすく、
+     待ち続けると、同期そのものが「接続しています…」のまま
+     永久に止まる。上限を決めて、来なければあきらめる */
+  var G_WAIT_QUIET = 12000, G_WAIT_ASK = 120000;
+  /* 黙って取り直せなかった時刻。しばらくは、黙って取り直す道を飛ばす。
+     押したのに12秒待たされる、ということがないように */
+  var gQuietDead = 0;
+
   function gKey(quiet) {
     if (gTok && Date.now() < gTokUntil) return Promise.resolve(gTok);
     return gScript().then(function () {
       return new Promise(function (ok, ng) {
+        var done = false, timer = null;
+        function win(t) { if (done) return; done = true; clearTimeout(timer); ok(t); }
+        function lose(e) { if (done) return; done = true; clearTimeout(timer); ng(e); }
         if (!gClient) {
           gClient = google.accounts.oauth2.initTokenClient({
             client_id: G_ID, scope: G_SCOPE, callback: function () {}
@@ -462,12 +479,17 @@
         gClient.callback = function (res) {
           if (!res || res.error) {
             /* 黙って取り直そうとして断られただけなら、まだ手はある */
-            return ng(new Error(quiet ? "quiet" : "許可が下りませんでした。"));
+            return lose(new Error(quiet ? "quiet" : "許可が下りませんでした。"));
           }
           gTok = res.access_token;
           gTokUntil = Date.now() + ((res.expires_in || 3600) - 60) * 1000;
-          ok(gTok);
+          win(gTok);
         };
+        timer = setTimeout(function () {
+          if (quiet) gQuietDead = Date.now();
+          lose(new Error(quiet ? "quiet"
+            : "Googleから返事がありませんでした。通信を確かめて、もう一度お試しください。"));
+        }, quiet ? G_WAIT_QUIET : G_WAIT_ASK);
         try {
           var opt = { prompt: quiet ? "" : "consent" };
           /* 前に選んだアカウントを伝えると、選び直しの画面が出ない。
@@ -475,7 +497,7 @@
           var who = recall("gacct");
           if (quiet && who) opt.hint = who;
           gClient.requestAccessToken(opt);
-        } catch (e) { ng(e); }
+        } catch (e) { lose(e); }
       });
     });
   }
@@ -492,15 +514,33 @@
                       function (e) { done(); throw e; });
   }
 
+  /* 返事が来ない通信を、いつまでも待たない。
+     1本でも宙ぶらりんになると、同期が丸ごと止まってしまう */
+  var NET_WAIT = 60000;
+  function netFetch(url, opt, ms) {
+    opt = opt || {};
+    var ac = null;
+    try { ac = new AbortController(); opt.signal = ac.signal; } catch (e) {}
+    return new Promise(function (ok, ng) {
+      var over = setTimeout(function () {
+        try { if (ac) ac.abort(); } catch (e) {}
+        ng(new Error("通信が返ってきませんでした。電波の届くところで、もう一度お試しください。"));
+      }, ms || NET_WAIT);
+      fetch(url, opt).then(function (r) { clearTimeout(over); ok(r); },
+                           function (e) { clearTimeout(over); ng(e); });
+    });
+  }
+
   function gCall(url, opt) {
     opt = opt || {};
+    var dead = Date.now() - gQuietDead < 60000;
     var key = (quietSync || noPrompt) ? gKey(true)
-      : gKey(true).catch(function () { return gKey(false); });
+      : (dead ? gKey(false) : gKey(true).catch(function () { return gKey(false); }));
     return key.then(function (t) {
       var h = opt.headers || {};
       h.Authorization = "Bearer " + t;
       opt.headers = h;
-      return fetch(url, opt);
+      return netFetch(url, opt);
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
@@ -533,8 +573,8 @@
        取れなければ、覚えてある名前のままでかまわない */
     refresh: function () {
       return gKey(true).then(function (t) {
-        return fetch("https://www.googleapis.com/drive/v3/about?fields=user",
-          { headers: { Authorization: "Bearer " + t } });
+        return netFetch("https://www.googleapis.com/drive/v3/about?fields=user",
+          { headers: { Authorization: "Bearer " + t } }, 20000);
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (a) {
         var n = (a && a.user && (a.user.emailAddress || a.user.displayName)) || "";
         if (n) { gName = n; remember("gacct", n); }
@@ -678,8 +718,8 @@
 
     get: function (fileId) {
       return gKey(true).catch(function () { return gKey(false); }).then(function (t) {
-        return fetch(DRIVE + "/" + fileId + "?alt=media",
-                     { headers: { Authorization: "Bearer " + t } });
+        return netFetch(DRIVE + "/" + fileId + "?alt=media",
+                        { headers: { Authorization: "Bearer " + t } });
       }).then(function (r) {
         if (!r.ok) throw new Error("取り出せませんでした（" + r.status + "）。");
         return r.blob();
@@ -1428,6 +1468,15 @@
     return /[A-Za-z0-9]/.test(head) ? head : "●";
   }
 
+  /* 同期しているあいだ、下の丸にも輪をまわす。
+     アカウント画面を閉じていても、働いていることが分かるように */
+  function busyMark() {
+    var e = $("meBtn");
+    if (!e) return;
+    if (typeof syncing !== "undefined" && syncing) e.classList.add("working");
+    else e.classList.remove("working");
+  }
+
   function paintMe() {
     var el = $("meBtn");
     if (!el) return;
@@ -1443,6 +1492,8 @@
       el.className = "metab";
       el.innerHTML = '<svg><use href="#i-me"/></svg>';
     }
+    /* 描き直しても、回っている印が消えないように */
+    busyMark();
     el.setAttribute("aria-label", Shelf.linked()
       ? ("アカウント（" + (who || "ログイン中") + "）") : "Googleでログイン");
     el.onclick = teamSheet;
@@ -5564,10 +5615,12 @@
     syncSince = Date.now();
     syncStep = "";
     quietSync = !!quiet;
+    busyMark();
     var up = null;
     function fell(e) {
       progress(100);
       syncing = false; quietSync = false; syncStep = "";
+      busyMark();
       toast(why(e), true);
     }
     try {
@@ -5592,6 +5645,7 @@
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
       unsent = false;
       syncing = false; quietSync = false; syncStep = "";
+      busyMark();
       if (after) after();
     }).catch(fell);
     } catch (e) {
@@ -5674,7 +5728,7 @@
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
-          + '<button class="rowbtn" id="tmSync"><div><b>いますぐ同期</b>'
+          + '<button class="rowbtn' + (syncing ? " working" : "") + '" id="tmSync"><div><b>いますぐ同期</b>'
           + '<span id="tmSyncSay">' + (syncing
               ? esc(syncStep || "いま同期しています…")
               : "変わったものを送り、ほかの端末の変わりを受け取ります。"
@@ -5761,7 +5815,13 @@
       syncWatch = setInterval(function () {
         var e = $("tmSyncSay");
         if (!e) { clearInterval(syncWatch); syncWatch = null; return; }
-        if (syncing) { e.textContent = syncStep || "いま同期しています…"; return; }
+        var row = $("tmSync");
+        if (syncing) {
+          e.textContent = syncStep || "いま同期しています…";
+          if (row) row.classList.add("working");
+          return;
+        }
+        if (row) row.classList.remove("working");
         e.textContent = "変わったものを送り、ほかの端末の変わりを受け取ります。"
           + "写真は一度送れば二度は送りません。"
           + "最後に同期したのは " + whenTxt(recall("syncAt"));

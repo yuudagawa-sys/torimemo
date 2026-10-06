@@ -1941,3 +1941,21 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   :root:not([data-theme="light"]) .fsqwrap .fmore{background:rgba(20,26,24,.3); color:#DCE9E3; border-color:rgba(255,255,255,.14); text-shadow:0 1px 2px rgba(0,0,0,.45)}
 }
 :root[data-theme="dark"] .fsqwrap .fmore{background:rgba(20,26,24,.3); color:#DCE9E3; border-color:rgba(255,255,255,.14); text-shadow:0 1px 2px rgba(0,0,0,.45)}
+
+/* ================= 同期しているあいだ、回っていることを見せる =================
+   初回は写真が何十枚もあって何分もかかる。止まっているのか
+   働いているのか分からないと、押し直したくなる */
+@keyframes spin{to{transform:rotate(360deg)}}
+.rowbtn.working svg{animation:spin 1.1s linear infinite; color:var(--mark)}
+.rowbtn.working b::after{
+  content:""; display:inline-block; vertical-align:middle;
+  width:6px; height:6px; margin-left:7px; border-radius:999px;
+  background:var(--mark); animation:blink 1.1s ease-in-out infinite;
+}
+/* 画面のどこに居ても分かるように、下の丸にも輪をまわす */
+.tabbar .metab.working::after{
+  content:""; position:absolute; inset:-5px;
+  border-radius:999px; border:1.5px solid transparent; border-top-color:var(--mark);
+  animation:spin 1s linear infinite;
+}
+.tabbar .metab{position:relative}
