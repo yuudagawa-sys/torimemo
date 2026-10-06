@@ -1086,7 +1086,9 @@ header.top{padding-top:env(safe-area-inset-top)}
 .fab.wide span{display:block; white-space:nowrap}
 
 .tabbar{
-  display:grid; grid-template-columns:repeat(4,1fr) auto;
+  /* 5つを等分に割る。こうしておけば、両端の余白も、
+     印どうしの間も、こちらで数えなくても揃う */
+  display:grid; grid-template-columns:repeat(5,1fr);
   background:var(--card); border-top:1px solid var(--line);
   align-items:end;
   padding:7px 4px calc(7px + env(safe-area-inset-bottom));
@@ -1100,7 +1102,8 @@ header.top{padding-top:env(safe-area-inset-top)}
 /* 歯車は線が込んでいるぶん大きく見えるので、少しだけ落とす */
 
 .tabbar button span{
-  font-size:10.5px; letter-spacing:.02em; white-space:nowrap;
+  /* 5等分にしたぶん1枠が狭い。「新しいフォルダ」が収まる字の大きさ */
+  font-size:10px; letter-spacing:0; white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; max-width:100%;
 }
 .tabbar button[aria-current="true"]{color:var(--ink); font-weight:700}
@@ -1557,16 +1560,16 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 /* アカウントの丸。Googleとのやりとりは、ここを押せば全部ある。
    下のバーのいちばん右。名前は入れない。丸そのものが目印になる */
 .tabbar .metab{
-  /* ほかの印と同じ大きさに見えるところ。塗りの丸は、
-     線だけの印より大きく見えるので、少しだけ小さく取る */
-  width:26px; height:26px; padding:0; margin:0 6px 12px 10px;
-  border-radius:999px; align-self:center;
+  /* ほかの印とちょうど同じ大きさ。こうしておくと、
+     両端の余白も、印どうしの間も、すべて同じ幅になる */
+  width:22px; height:22px; padding:0; margin:0 0 13px;
+  border-radius:999px; align-self:center; justify-self:center;
   display:flex; align-items:center; justify-content:center;
   background:var(--sunk); border:1px solid var(--line2); color:var(--ink3);
-  font-family:var(--ui); font-size:12px; font-weight:700; line-height:1;
+  font-family:var(--ui); font-size:11px; font-weight:700; line-height:1;
   background-size:cover; background-position:center;
 }
-.tabbar .metab svg{width:15px; height:15px}
+.tabbar .metab svg{width:14px; height:14px}
 /* ログイン中は色が入る。ひと目で入っているか分かる */
 .tabbar .metab.on{background-color:var(--mark); border-color:var(--mark); color:#fff}
 /* 自分で選んだ絵を入れたときは、文字も記号も出さない */
