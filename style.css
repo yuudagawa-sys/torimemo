@@ -471,6 +471,33 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .sheetgrid .frame{ -webkit-touch-callout:none }
 /* 1点の写真と、その左右の送りボタン */
 .shotwrap{position:relative}
+.shot.big{cursor:zoom-in}
+
+/* ---------- 1枚を画面いっぱいで見る ---------- */
+.lens{
+  position:fixed; inset:0; z-index:120;
+  background:#0d100e;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden; touch-action:none;
+  opacity:0; transition:opacity .18s;
+}
+.lens.on{opacity:1}
+.lensimg{
+  /* はじめは全体が入る大きさ。横位置なら上下に余白がつく */
+  max-width:100%; max-height:100%;
+  width:auto; height:auto;
+  object-fit:contain; display:block;
+  transform-origin:center center;
+  -webkit-user-drag:none; user-select:none; pointer-events:none;
+}
+.lensx{
+  position:absolute; z-index:2;
+  top:calc(env(safe-area-inset-top) + 10px); right:14px;
+  width:38px; height:38px; border-radius:999px;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,.14); color:#fff; backdrop-filter:blur(6px);
+}
+.lensx svg{width:18px; height:18px}
 .stepper{
   position:absolute; top:50%; transform:translateY(-50%);
   width:38px; height:38px; display:grid; place-items:center;
@@ -1059,7 +1086,7 @@ header.top{padding-top:env(safe-area-inset-top)}
 .fab.wide span{display:block; white-space:nowrap}
 
 .tabbar{
-  display:grid; grid-template-columns:repeat(4,1fr);
+  display:grid; grid-template-columns:repeat(4,1fr) auto;
   background:var(--card); border-top:1px solid var(--line);
   align-items:end;
   padding:7px 4px calc(7px + env(safe-area-inset-bottom));
@@ -1528,21 +1555,20 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   padding:8px var(--pad) 0; min-height:26px;
 }
 /* アカウントの丸。Googleとのやりとりは、ここを押せば全部ある。
-   帯の上に重ねて置くので、上の行の高さには関わらない */
-.me{
-  position:absolute; z-index:4;
-  left:var(--pad); top:calc(env(safe-area-inset-top) + 5px);
-  width:28px; height:28px; padding:0; border-radius:999px;
+   下のバーのいちばん右。名前は入れない。丸そのものが目印になる */
+.tabbar .metab{
+  width:34px; height:34px; padding:0; margin:0 6px 2px 10px;
+  border-radius:999px; align-self:center;
   display:flex; align-items:center; justify-content:center;
   background:var(--sunk); border:1px solid var(--line2); color:var(--ink3);
-  font-family:var(--ui); font-size:12.5px; font-weight:700; line-height:1;
+  font-family:var(--ui); font-size:14px; font-weight:700; line-height:1;
+  background-size:cover; background-position:center;
 }
-.me svg{width:15px; height:15px}
-.me:hover{border-color:var(--ink3)}
+.tabbar .metab svg{width:18px; height:18px}
 /* ログイン中は色が入る。ひと目で入っているか分かる */
-.me.on{background:var(--mark); border-color:var(--mark); color:#fff}
-/* バナーの画像を敷いているときは、その上に乗る */
-.banner.has + .top-in{position:relative}
+.tabbar .metab.on{background-color:var(--mark); border-color:var(--mark); color:#fff}
+/* 自分で選んだ絵を入れたときは、文字も記号も出さない */
+.tabbar .metab.pic{border-color:var(--line2); color:transparent}
 .banner .bmark{
   /* ヘルベチカは字面が広いので、字間を空けずに組む */
   font-family:var(--ui); font-weight:700; font-size:12.5px;

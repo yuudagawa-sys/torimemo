@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "55";
+  var APPVER = "56";
 
   /* ============================================================
      小道具
@@ -1318,8 +1318,8 @@
   }
 
   /* 上のバナーと、3つのエリアの背景。画像は端末の中に持つ */
-  var SKIN = { banner: "", bg1: "", bg2: "", bg3: "" };
-  var SKIN_KEYS = ["banner", "bg1", "bg2", "bg3"];
+  var SKIN = { banner: "", bg1: "", bg2: "", bg3: "", me: "" };
+  var SKIN_KEYS = ["banner", "bg1", "bg2", "bg3", "me"];
 
   function loadSkin() {
     return Promise.all(SKIN_KEYS.map(function (k) {
@@ -1341,6 +1341,7 @@
 
   function applySkin() {
     paintBanner();
+    paintMe();
     ["bg1", "bg2", "bg3"].forEach(function (k) {
       var el = areaEl(k);
       if (!el) return;
@@ -1357,16 +1358,20 @@
     var el = $("meBtn");
     if (!el) return;
     var who = Shelf.linked() ? Shelf.who() : "";
-    if (Shelf.linked()) {
+    el.style.backgroundImage = SKIN.me ? 'url("' + SKIN.me + '")' : "";
+    if (SKIN.me) {
+      el.className = "metab pic" + (Shelf.linked() ? " on" : "");
+      el.textContent = "";
+    } else if (Shelf.linked()) {
       var head = (who || "?").trim().charAt(0).toUpperCase();
-      el.className = "me on";
+      el.className = "metab on";
       el.textContent = /[A-Za-z0-9]/.test(head) ? head : "●";
-      el.setAttribute("aria-label", "アカウント（" + (who || "ログイン中") + "）");
     } else {
-      el.className = "me";
+      el.className = "metab";
       el.innerHTML = '<svg><use href="#i-me"/></svg>';
-      el.setAttribute("aria-label", "Googleでログイン");
     }
+    el.setAttribute("aria-label", Shelf.linked()
+      ? ("アカウント（" + (who || "ログイン中") + "）") : "Googleでログイン");
     el.onclick = teamSheet;
   }
 
@@ -1396,7 +1401,8 @@
     banner: { w: 1200, h: 400 },   /* 横長の帯 */
     bg1:    { w: 1200, h: 800 },   /* 見出しのうしろ */
     bg2:    { w: 900,  h: 1600 },  /* 画面ぜんたい。縦長 */
-    bg3:    { w: 1400, h: 320 }    /* 下のバー */
+    bg3:    { w: 1400, h: 320 },   /* 下のバー */
+    me:     { w: 320,  h: 320 }    /* アカウントの丸。正方形で切り取る */
   };
 
   function saveSkin(file) {
@@ -1521,7 +1527,7 @@
       applySkin();
       closeSheet();
       toast("入れました");
-      lookDialog();
+      if (slot === "me") teamSheet(); else lookDialog();
     }).catch(function (e) { progress(100); toast(why(e), true); });
   }
   function clearSkin(slot) {
@@ -1530,7 +1536,7 @@
       SKIN[slot] = "";
       remember(slot + "col", "");
       applySkin();
-      lookDialog();
+      if (slot === "me") teamSheet(); else lookDialog();
     });
   }
 
@@ -2749,6 +2755,9 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
+    /* 画面いっぱいで見ている間は、そちらが先に閉じる。
+       ここで下の画面まで閉じると、戻る場所が無くなる */
+    if (document.querySelector(".lens")) return;
     if ($("mini").className.indexOf("on") >= 0) { miniClose(); return; }
     if ($("scrim").className.indexOf("on") >= 0) { closeSheet(); return; }
     if (picking) pickOff();
@@ -4133,7 +4142,8 @@
       }
       if (it.kind === "photo") {
         media = '<div class="shotwrap">'
-          + '<img class="shot" id="mShot" src="' + src + '" alt="">'
+          + '<img class="shot big" id="mShot" src="' + src + '" alt="" '
+          + 'role="button" tabindex="0" aria-label="大きく見る">'
           + stepArrows() + "</div>"
           + '<div class="fxrow" style="margin-top:6px">'
           + '<button class="ghost" id="mFix">写真を直す</button>'
@@ -4206,6 +4216,19 @@
       }
       var shot = $("mShot");
       if (shot) attachSwipe(shot, function () { step(-1); }, function () { step(1); });
+      /* 写真を押したら画面いっぱいで見る。払って送る動きとぶつからないよう、
+         指が動かずに離れたときだけ開く */
+      if (shot && it.kind === "photo") {
+        var px = 0, py = 0;
+        shot.addEventListener("pointerdown", function (e) { px = e.clientX; py = e.clientY; });
+        shot.addEventListener("pointerup", function (e) {
+          if (Math.abs(e.clientX - px) > 8 || Math.abs(e.clientY - py) > 8) return;
+          bigView(shot.src);
+        });
+        shot.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); bigView(shot.src); }
+        });
+      }
 
       var pv = $("mPrev"), nx = $("mNext");
       if (pv && nx) {
@@ -5293,6 +5316,11 @@
       var body = on
         ? '<div class="linked"><b>ログイン中</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "このGoogleアカウント") + "</span></div>"
+          + '<button class="rowbtn" id="tmFace"><div><b>アイコンの絵を選ぶ</b>'
+          + "<span>" + (SKIN.me ? "いまは自分で選んだ絵です" : "選ばないあいだは、アカウントの頭文字が出ます")
+          + "</span></div>"
+          + '<svg><use href="#i-cam"/></svg></button>'
+          + (SKIN.me ? '<button class="ghost" id="tmFaceOff" style="width:100%">アイコンの絵をやめる</button>' : "")
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
@@ -5351,6 +5379,11 @@
           paintTeam();
         }).catch(function (e) { say(why(e), true); });
       };
+
+      var fc = $("tmFace");
+      if (fc) fc.onclick = function () { pickSkin("me"); };
+      var fo = $("tmFaceOff");
+      if (fo) fo.onclick = function () { clearSkin("me"); };
 
       var dev = $("tmDev");
       if (dev) dev.onchange = function () {
@@ -5738,6 +5771,123 @@
       });
     }).catch(function (e) { progress(100); toast(why(e), true); });
   }
+  /* ============================================================
+     1枚を画面いっぱいで見る
+     ------------------------------------------------------------
+     はじめは全体が入る大きさ。横位置の写真は上下に余白がつくので、
+     端が切れることはない。そこから、つまむか2回たたくと大きくなる。
+     ============================================================ */
+  var lensOff = null;   /* 開いているあいだの後片付け */
+
+  function bigView(src) {
+    if (!src || lensOff) return;
+    var box = document.createElement("div");
+    box.className = "lens";
+    box.innerHTML = '<img class="lensimg" alt="">'
+      + '<button class="lensx" aria-label="閉じる"><svg><use href="#i-x"/></svg></button>';
+    var img = box.querySelector(".lensimg");
+    img.src = src;
+    document.body.appendChild(box);
+    /* 画面の送りには手をつけない。下の画面が止めていることがあり、
+       こちらで戻すと食い違う。この画面は全面を覆い、
+       指の動きも受け取らないので、裏が動くことはない */
+    requestAnimationFrame(function () { box.classList.add("on"); });
+
+    var sc = 1, tx = 0, ty = 0;
+    var pts = {}, nPts = 0, last = null, lastTap = 0, pinch = null;
+
+    function draw() {
+      img.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + sc + ")";
+    }
+    /* はみ出したぶんより外へは行かせない。
+       写真が画面より小さい向きは、まん中に置いたままにする */
+    function clamp() {
+      var b = box.getBoundingClientRect();
+      var w = img.clientWidth * sc, h = img.clientHeight * sc;
+      var mx = Math.max(0, (w - b.width) / 2), my = Math.max(0, (h - b.height) / 2);
+      tx = Math.max(-mx, Math.min(mx, tx));
+      ty = Math.max(-my, Math.min(my, ty));
+    }
+    function zoomAt(next, cx, cy) {
+      var b = box.getBoundingClientRect();
+      var ox = cx - b.left - b.width / 2, oy = cy - b.top - b.height / 2;
+      var k = next / sc;
+      tx = ox - (ox - tx) * k;
+      ty = oy - (oy - ty) * k;
+      sc = next;
+      clamp(); draw();
+    }
+
+    function close() {
+      if (!lensOff) return;
+      lensOff(); lensOff = null;
+      box.classList.remove("on");
+      setTimeout(function () { try { box.remove(); } catch (e) {} }, 180);
+    }
+
+    box.querySelector(".lensx").onclick = close;
+
+    box.addEventListener("pointerdown", function (e) {
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      nPts++;
+      try { box.setPointerCapture(e.pointerId); } catch (x) {}
+      if (nPts === 2) {
+        var k = Object.keys(pts), a = pts[k[0]], c = pts[k[1]];
+        pinch = { d: Math.hypot(a.x - c.x, a.y - c.y), s: sc };
+      }
+      last = { x: e.clientX, y: e.clientY };
+    });
+
+    box.addEventListener("pointermove", function (e) {
+      if (!pts[e.pointerId]) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (nPts >= 2 && pinch) {
+        var k = Object.keys(pts), a = pts[k[0]], c = pts[k[1]];
+        var d = Math.hypot(a.x - c.x, a.y - c.y);
+        if (pinch.d > 0) {
+          zoomAt(Math.max(1, Math.min(6, pinch.s * (d / pinch.d))),
+                 (a.x + c.x) / 2, (a.y + c.y) / 2);
+        }
+        return;
+      }
+      if (sc > 1 && last) {
+        e.preventDefault();
+        tx += e.clientX - last.x;
+        ty += e.clientY - last.y;
+        last = { x: e.clientX, y: e.clientY };
+        clamp(); draw();
+      }
+    });
+
+    ["pointerup", "pointercancel"].forEach(function (nm) {
+      box.addEventListener(nm, function (e) {
+        if (pts[e.pointerId]) { delete pts[e.pointerId]; nPts = Math.max(0, nPts - 1); }
+        if (nPts < 2) pinch = null;
+        if (nPts === 0) last = null;
+        if (nm !== "pointerup") return;
+        /* 2回たたいたら、大きくする・元に戻すを行き来する */
+        var now = Date.now();
+        if (now - lastTap < 300) {
+          lastTap = 0;
+          if (sc > 1.02) { sc = 1; tx = 0; ty = 0; draw(); }
+          else zoomAt(2.5, e.clientX, e.clientY);
+          return;
+        }
+        lastTap = now;
+      });
+    });
+
+    /* パソコンでは、ホイールでも大きくできる */
+    box.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      zoomAt(Math.max(1, Math.min(6, sc * (e.deltaY < 0 ? 1.12 : 1 / 1.12))), e.clientX, e.clientY);
+    }, { passive: false });
+
+    function onKey(e) { if (e.key === "Escape") close(); }
+    document.addEventListener("keydown", onKey);
+    lensOff = function () { document.removeEventListener("keydown", onKey); };
+  }
+
   /* ============================================================
      左右スワイプ
      ============================================================ */
