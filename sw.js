@@ -4,7 +4,7 @@
  * 電波がなくても起動できるようにする。
  * 写真やメモは IndexedDB 側にあるので、ここでは扱わない。
  */
-var CACHE = "expo-note-v47";
+var CACHE = "expo-note-v48";
 var SHELL = [
   "./",
   "./index.html",
@@ -62,17 +62,51 @@ self.addEventListener("fetch", function (e) {
     return;
   }
 
-  /* アプリ本体は、まず貯めてあるものを出して、裏で新しいものを取りに行く */
+  /* アプリ本体（HTML・CSS・JS）は、通信があるかぎり新しいほうを出す。
+     貯めてあるものを先に出していたせいで、直したものが端末に届くのが
+     いつも一歩遅れていた。遅いときや圏外のときは、貯めてあるものに戻す */
+  var shell = req.mode === "navigate"
+    || /\.(html|css|js|webmanifest)$/.test(url.pathname);
+
+  if (shell) {
+    e.respondWith(
+      new Promise(function (done) {
+        var settled = false;
+        function fallback() {
+          if (settled) return;
+          settled = true;
+          caches.match(req).then(function (hit) {
+            done(hit || caches.match("./index.html"));
+          });
+        }
+        /* 3秒で見切りをつける。電波が細いときに真っ白で待たせない */
+        var timer = setTimeout(fallback, 3000);
+        fetch(req).then(function (res) {
+          clearTimeout(timer);
+          if (res && res.status === 200) {
+            var copy = res.clone();
+            caches.open(CACHE).then(function (c) { c.put(req, copy); }).catch(function () {});
+          }
+          if (settled) return;
+          settled = true;
+          done(res);
+        }).catch(function () { clearTimeout(timer); fallback(); });
+      })
+    );
+    return;
+  }
+
+  /* 絵や音は変わらないので、貯めてあるものをそのまま出す */
   e.respondWith(
     caches.match(req).then(function (hit) {
-      var live = fetch(req).then(function (res) {
+      if (hit) return hit;
+      return fetch(req).then(function (res) {
         if (res && res.status === 200) {
           var copy = res.clone();
           caches.open(CACHE).then(function (c) { c.put(req, copy); }).catch(function () {});
         }
         return res;
-      }).catch(function () { return hit || caches.match("./index.html"); });
-      return hit || live;
+      }).catch(function () { return caches.match("./index.html"); });
     })
   );
 });

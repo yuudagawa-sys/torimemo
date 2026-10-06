@@ -461,7 +461,12 @@
           ok(gTok);
         };
         try {
-          gClient.requestAccessToken({ prompt: quiet ? "" : "consent" });
+          var opt = { prompt: quiet ? "" : "consent" };
+          /* 前に選んだアカウントを伝えると、選び直しの画面が出ない。
+             これが無いと、つないであっても毎回聞かれる */
+          var who = recall("gacct");
+          if (quiet && who) opt.hint = who;
+          gClient.requestAccessToken(opt);
         } catch (e) { ng(e); }
       });
     });
@@ -470,7 +475,10 @@
   /* Googleへの問い合わせ。合鍵を添えて、返事が変なら日本語にして投げ直す */
   function gCall(url, opt) {
     opt = opt || {};
-    return gKey(true).catch(function () { return gKey(false); }).then(function (t) {
+    /* 裏で動いているときは、黙って取り直すだけにする。
+       触ってもいないのに許可画面が出てくると、何事かと驚く */
+    var key = quietSync ? gKey(true) : gKey(true).catch(function () { return gKey(false); });
+    return key.then(function (t) {
       var h = opt.headers || {};
       h.Authorization = "Bearer " + t;
       opt.headers = h;
@@ -478,7 +486,7 @@
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
-        throw new Error("Googleとの接続が切れました。もう一度接続してください。");
+        throw new Error("Googleとの接続が切れました。同期の画面からもう一度つないでください。");
       }
       if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
       return r.status === 204 ? null : r.json();
@@ -492,24 +500,35 @@
     name: "drive",
 
     linked: function () { return recall("linked") === "1"; },
-    who: function () { return gName; },
+    /* 名前は端末に覚えておく。覚えていないと、画面を開くたびに
+       Googleへ聞きに行くことになり、そのたびに許可画面が出る */
+    who: function () { return gName || recall("gacct") || ""; },
 
     link: function () {
       return gKey(false).then(function () {
         remember("linked", "1");
-        /* 名前が取れなくても、つながってさえいれば用は足りる */
-        return gCall("https://www.googleapis.com/drive/v3/about?fields=user")
-          .then(function (a) {
-            gName = (a && a.user && (a.user.emailAddress || a.user.displayName)) || "";
-            return gName;
-          }).catch(function () { return ""; });
+        return Shelf.refresh();
       });
+    },
+
+    /* 名前を取り直す。許可画面は出さない。
+       取れなければ、覚えてある名前のままでかまわない */
+    refresh: function () {
+      return gKey(true).then(function (t) {
+        return fetch("https://www.googleapis.com/drive/v3/about?fields=user",
+          { headers: { Authorization: "Bearer " + t } });
+      }).then(function (r) { return r.ok ? r.json() : null; }).then(function (a) {
+        var n = (a && a.user && (a.user.emailAddress || a.user.displayName)) || "";
+        if (n) { gName = n; remember("gacct", n); }
+        return Shelf.who();
+      }).catch(function () { return Shelf.who(); });
     },
 
     unlink: function () {
       var t = gTok;
       gTok = null; gTokUntil = 0; gName = "";
       remember("linked", "");
+      remember("gacct", "");
       /* Google側でも合鍵を無効にしておく。切ったつもりが
          生きている、という状態を残さない */
       if (t && window.google && google.accounts && google.accounts.oauth2) {
@@ -1014,7 +1033,9 @@
         hadSW = true;
       });
       window.addEventListener("load", function () {
-        navigator.serviceWorker.register("sw.js").then(function (reg) {
+        /* updateViaCache を切っておく。これが無いと、新しい版があるか
+           調べるときに、ブラウザの手持ちの古い sw.js を見てしまう */
+        navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(function (reg) {
           /* 新しい版が届いたら、黙って入れ替えず、こちらから声をかける。
              書きかけの画面が急に消えないように */
           reg.addEventListener("updatefound", function () {
@@ -1024,9 +1045,25 @@
               if (w.state === "installed" && navigator.serviceWorker.controller) updateBar();
             });
           });
-          /* 起動のたびと、開きっぱなしのときは1時間ごとに、新しい版がないか見る */
-          try { reg.update(); } catch (e) {}
-          setInterval(function () { try { reg.update(); } catch (e) {} }, 60 * 60 * 1000);
+          /* すでに控えている版があれば、その場で声をかける */
+          if (reg.waiting && navigator.serviceWorker.controller) updateBar();
+
+          /* 新しい版がないか見にいく。開きっぱなしのときは1時間ごと。
+             ただしホーム画面のアプリは、閉じずに戻ってくるかぎり
+             load も時計も動かない。戻ってきたときに必ず見にいく */
+          var lookedAt = 0;
+          function look() {
+            /* 立て続けには見にいかない。ただし間を空けすぎると、
+               ちょっと離れて戻ってきたときに見のがす */
+            if (Date.now() - lookedAt < 10000) return;
+            lookedAt = Date.now();
+            try { reg.update(); } catch (e) {}
+          }
+          look();
+          setInterval(look, 60 * 60 * 1000);
+          document.addEventListener("visibilitychange", function () {
+            if (!document.hidden) look();
+          });
         }).catch(function () {});
       });
     }
@@ -5066,7 +5103,7 @@
       var on = Shelf.linked();
       var body = on
         ? '<div class="linked"><b>接続済み</b><span>'
-            + (Shelf.who() ? esc(Shelf.who()) : "アカウントを確認中…") + "</span></div>"
+            + (Shelf.who() ? esc(Shelf.who()) : "このGoogleアカウント") + "</span></div>"
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
@@ -5206,9 +5243,13 @@
     }
     paintTeam();
 
-    /* 名前がまだ取れていなければ、裏で取って書き足す */
-    if (Shelf.linked() && !Shelf.who()) {
-      Shelf.link().then(function () { if ($("tmSay")) paintTeam(); }).catch(function () {});
+    /* 名前は覚えてあるぶんをすぐ出す。裏で静かに確かめ直すだけ。
+       ここで link() を呼ぶと、開くたびに許可画面が出てしまう */
+    if (Shelf.linked()) {
+      var had = Shelf.who();
+      Shelf.refresh().then(function (n) {
+        if (n !== had && $("tmSay")) paintTeam();
+      }).catch(function () {});
     }
   }
 
