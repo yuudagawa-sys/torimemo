@@ -1557,14 +1557,16 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 /* アカウントの丸。Googleとのやりとりは、ここを押せば全部ある。
    下のバーのいちばん右。名前は入れない。丸そのものが目印になる */
 .tabbar .metab{
-  width:34px; height:34px; padding:0; margin:0 6px 2px 10px;
+  /* ほかの印と同じ大きさに見えるところ。塗りの丸は、
+     線だけの印より大きく見えるので、少しだけ小さく取る */
+  width:26px; height:26px; padding:0; margin:0 6px 12px 10px;
   border-radius:999px; align-self:center;
   display:flex; align-items:center; justify-content:center;
   background:var(--sunk); border:1px solid var(--line2); color:var(--ink3);
-  font-family:var(--ui); font-size:14px; font-weight:700; line-height:1;
+  font-family:var(--ui); font-size:12px; font-weight:700; line-height:1;
   background-size:cover; background-position:center;
 }
-.tabbar .metab svg{width:18px; height:18px}
+.tabbar .metab svg{width:15px; height:15px}
 /* ログイン中は色が入る。ひと目で入っているか分かる */
 .tabbar .metab.on{background-color:var(--mark); border-color:var(--mark); color:#fff}
 /* 自分で選んだ絵を入れたときは、文字も記号も出さない */

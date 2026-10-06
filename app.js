@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "56";
+  var APPVER = "57";
 
   /* ============================================================
      小道具
@@ -5795,6 +5795,10 @@
 
     var sc = 1, tx = 0, ty = 0;
     var pts = {}, nPts = 0, last = null, lastTap = 0, pinch = null;
+    /* つまんで離すと指が2本続けて離れる。それを2回たたいたと取り違えて
+       せっかく広げた大きさが戻っていた。
+       指1本で、動かさずに、最後の1本が離れたときだけ「たたいた」と見る */
+    var downX = 0, downY = 0, downAt = 0, moved = false, multi = false;
 
     function draw() {
       img.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + sc + ")";
@@ -5831,6 +5835,8 @@
       pts[e.pointerId] = { x: e.clientX, y: e.clientY };
       nPts++;
       try { box.setPointerCapture(e.pointerId); } catch (x) {}
+      if (nPts === 1) { downX = e.clientX; downY = e.clientY; downAt = Date.now(); moved = false; multi = false; }
+      if (nPts >= 2) multi = true;
       if (nPts === 2) {
         var k = Object.keys(pts), a = pts[k[0]], c = pts[k[1]];
         pinch = { d: Math.hypot(a.x - c.x, a.y - c.y), s: sc };
@@ -5841,6 +5847,7 @@
     box.addEventListener("pointermove", function (e) {
       if (!pts[e.pointerId]) return;
       pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (Math.abs(e.clientX - downX) > 10 || Math.abs(e.clientY - downY) > 10) moved = true;
       if (nPts >= 2 && pinch) {
         var k = Object.keys(pts), a = pts[k[0]], c = pts[k[1]];
         var d = Math.hypot(a.x - c.x, a.y - c.y);
@@ -5863,8 +5870,13 @@
       box.addEventListener(nm, function (e) {
         if (pts[e.pointerId]) { delete pts[e.pointerId]; nPts = Math.max(0, nPts - 1); }
         if (nPts < 2) pinch = null;
-        if (nPts === 0) last = null;
+        if (nPts > 0) return;          /* まだ指が残っている。終わっていない */
+        last = null;
+        var wasMulti = multi, wasMoved = moved;
+        multi = false;
         if (nm !== "pointerup") return;
+        /* つまんだあとや、指を滑らせたあとは「たたいた」ではない */
+        if (wasMulti || wasMoved || Date.now() - downAt > 400) { lastTap = 0; return; }
         /* 2回たたいたら、大きくする・元に戻すを行き来する */
         var now = Date.now();
         if (now - lastTap < 300) {
