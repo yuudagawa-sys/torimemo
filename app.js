@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "61";
+  var APPVER = "62";
 
   /* ============================================================
      小道具
@@ -6118,6 +6118,28 @@
   var boards = [];
   var curBoard = null, boardSel = "";
 
+  /* 目安の線。紙の横幅を8つに割った幅を1ますとし、
+     縦もその幅で割る。こうするとます目が正方形になる */
+  var GRIDN = 8;
+  var GRIDS = [
+    { k: "",     name: "線なし" },
+    { k: "v",    name: "縦" },
+    { k: "h",    name: "横" },
+    { k: "both", name: "格子" }
+  ];
+  /* 紙に対する割合での、ます目の幅と高さ */
+  function gridStep(b) {
+    var sz = paperSize(b);
+    var gx = 1 / GRIDN;
+    return { x: gx, y: (sz.w * gx) / sz.h };
+  }
+  /* 吸い付き。近い線があればそこへ寄せる。
+     強すぎると置きたいところに置けないので、1ますの1/4まで */
+  function snapTo(v, step) {
+    var near = Math.round(v / step) * step;
+    return Math.abs(near - v) < step / 4 ? near : v;
+  }
+
   function boardById(id) {
     for (var i = 0; i < boards.length; i++) if (boards[i].id === id) return boards[i];
     return null;
@@ -6261,11 +6283,60 @@
           + "</div>";
       });
       out += "</div></div>"
+        + '<div class="boardtools" id="boardTools"></div>'
         + '<div class="boardbar" id="boardBar"></div>';
       stage.innerHTML = out;
+      paintGrid(b);
       wireBoard(b);
+      paintTools(b);
       paintBoardBar(b);
     });
+  }
+
+  /* 目安の線は紙の背景として描く。書き出した絵には出ない */
+  function paintGrid(b) {
+    var paper = $("paper");
+    if (!paper) return;
+    var g = b.grid || "";
+    if (!g) { paper.style.backgroundImage = ""; return; }
+    var st = gridStep(b);
+    var line = "rgba(34,64,58,.14)";
+    var bits = [], size = [];
+    if (g === "v" || g === "both") {
+      bits.push("repeating-linear-gradient(to right, " + line + " 0 1px, transparent 1px "
+        + (st.x * 100) + "%)");
+      size.push("100% 100%");
+    }
+    if (g === "h" || g === "both") {
+      bits.push("repeating-linear-gradient(to bottom, " + line + " 0 1px, transparent 1px "
+        + (st.y * 100) + "%)");
+      size.push("100% 100%");
+    }
+    paper.style.backgroundImage = bits.join(",");
+    paper.style.backgroundSize = size.join(",");
+  }
+
+  function paintTools(b) {
+    var el = $("boardTools");
+    if (!el) return;
+    var g = b.grid || "";
+    var now = GRIDS.filter(function (x) { return x.k === g; })[0] || GRIDS[0];
+    el.innerHTML = '<button id="bdGrid"><span class="bk"></span>' + esc(now.name) + "</button>"
+      + '<button id="bdSnap" aria-pressed="' + (!!b.snap) + '">吸い付き</button>'
+      + '<span style="flex:1 1 auto"></span>'
+      + '<button id="bdOut" class="go">1枚の画像にする</button>';
+    /* 押すたびに、線なし→縦→横→格子と回る。1タップで変えられる */
+    $("bdGrid").onclick = function () {
+      var i = 0;
+      GRIDS.forEach(function (x, n) { if (x.k === g) i = n; });
+      b.grid = GRIDS[(i + 1) % GRIDS.length].k;
+      saveBoard(b, function () { paintGrid(b); paintTools(b); });
+    };
+    $("bdSnap").onclick = function () {
+      b.snap = !b.snap;
+      saveBoard(b, function () { paintTools(b); toast(b.snap ? "線に吸い付きます" : "吸い付きをやめました"); });
+    };
+    $("bdOut").onclick = function () { boardOut(b); };
   }
 
   function paintBoardBar(b) {
@@ -6353,6 +6424,12 @@
       e.preventDefault();
       card.x = start.x + (e.clientX - start.px) / start.bw;
       card.y = start.y + (e.clientY - start.py) / start.bh;
+      /* 吸い付きが入っているときは、近い線へ寄せる */
+      if (b.snap) {
+        var st = gridStep(b);
+        card.x = snapTo(card.x, st.x);
+        card.y = snapTo(card.y, st.y);
+      }
       /* 紙の外へは出しきらない。つまみ出して見失わないように */
       card.x = Math.max(-0.1, Math.min(1.1, card.x));
       card.y = Math.max(-0.1, Math.min(1.1, card.y));
@@ -6374,6 +6451,68 @@
         if (wasCard) saveBoard(b, function () { paintBoardBar(b); paintEx(); });
       });
     });
+  }
+
+  /* 1枚の画像にする。印刷に耐える大きさで描く。
+     画面に出している目安の線は、ここには描かない */
+  var BOARD_DPI = 150;
+  function boardOut(b) {
+    var cards = (b.cards || []).filter(function (c) { return anyItem(c.itemId); });
+    if (!cards.length) { toast("まだ写真を貼っていません。", true); return; }
+
+    var sz = paperSize(b);
+    var W = Math.round(sz.w / 25.4 * BOARD_DPI);
+    var H = Math.round(sz.h / 25.4 * BOARD_DPI);
+    progress(5);
+    toast("1枚にまとめています…");
+
+    /* 画面に出している小さいほうではなく、元の大きさを使う */
+    var need = cards.map(function (c) {
+      var it = anyItem(c.itemId);
+      return it.blobId || it.thumbId;
+    });
+    ensureUrls(need).then(function () {
+      var cv = document.createElement("canvas");
+      cv.width = W; cv.height = H;
+      var g = cv.getContext("2d");
+      g.fillStyle = "#ffffff";
+      g.fillRect(0, 0, W, H);
+
+      var i = 0;
+      (function next() {
+        if (i >= cards.length) {
+          progress(94);
+          cv.toBlob(function (blob) {
+            if (!blob) { progress(100); toast("画像を作れませんでした。", true); return; }
+            var nm = "v1_" + safeName(b.name) + "_ボード.jpg";
+            handOver(blob, nm).then(function (how) {
+              progress(100);
+              if (how !== "cancel") toast("1枚にしました（" + W + "×" + H + "・" + mb(blob.size) + "）");
+            }).catch(function (e) { progress(100); toast(why(e), true); });
+          }, "image/jpeg", 0.92);
+          return;
+        }
+        var c = cards[i++];
+        progress(5 + Math.round((i / cards.length) * 86));
+        var it = anyItem(c.itemId);
+        var src = urlCache[it.blobId || it.thumbId];
+        if (!src) { next(); return; }
+        var im = new Image();
+        im.onload = function () {
+          var w = c.w * W;
+          var h = im.naturalHeight && im.naturalWidth
+            ? w * (im.naturalHeight / im.naturalWidth) : w;
+          g.save();
+          g.translate(c.x * W, c.y * H);
+          g.rotate((c.rot || 0) * Math.PI / 180);
+          g.drawImage(im, -w / 2, -h / 2, w, h);
+          g.restore();
+          next();
+        };
+        im.onerror = function () { next(); };
+        im.src = src;
+      })();
+    }).catch(function (e) { progress(100); toast(why(e), true); });
   }
 
   /* 貼る写真を選ぶ。フォルダを跨いで全部から選べる */

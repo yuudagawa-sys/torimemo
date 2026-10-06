@@ -515,6 +515,25 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
   display:block; padding:12px; font-size:11px; line-height:1.5;
   background:var(--sunk); color:var(--ink3);
 }
+/* ボードの道具。線の出しかた・吸い付き・書き出し */
+.boardtools{
+  display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+  padding:10px 0 2px;
+}
+.boardtools button{
+  padding:7px 12px; border:1px solid var(--line2); border-radius:999px;
+  background:var(--card); font-size:12.5px; color:var(--ink);
+  display:inline-flex; align-items:center; gap:6px;
+}
+.boardtools button[aria-pressed="true"]{background:var(--ink); border-color:var(--ink); color:var(--paper); font-weight:700}
+.boardtools button.go{background:var(--mark); border-color:var(--mark); color:#fff; font-weight:700}
+.boardtools .bk{
+  width:12px; height:12px; border:1px solid currentColor; opacity:.55;
+  background-image:linear-gradient(to right, currentColor 0 1px, transparent 1px 50%),
+                   linear-gradient(to bottom, currentColor 0 1px, transparent 1px 50%);
+  background-size:50% 50%;
+}
+
 /* 選んだ写真に効く帯 */
 .boardbar{
   display:flex; gap:6px; flex-wrap:wrap; align-items:center;
