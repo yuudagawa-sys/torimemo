@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "60";
+  var APPVER = "61";
 
   /* ============================================================
      小道具
@@ -1643,6 +1643,23 @@
     $("exMeta").innerHTML = bits.map(function (b) { return "<span>" + b + "</span>"; }).join("");
   }
 
+  /* カテゴリの並び順。利用者が入れ替えたぶんを覚えておく。
+     覚えていない名前は、あいうえお順であとに続ける */
+  function catOrder() {
+    try { return JSON.parse(recall("catorder") || "[]") || []; } catch (e) { return []; }
+  }
+  function sortCats(list) {
+    var ord = catOrder();
+    return list.slice().sort(function (a, b) {
+      var x = ord.indexOf(a), y = ord.indexOf(b);
+      if (x < 0 && y < 0) return a.localeCompare(b, "ja");
+      if (x < 0) return 1;
+      if (y < 0) return -1;
+      return x - y;
+    });
+  }
+  function railOpen() { return recall("railshut") !== "1"; }
+
   /* 棚のタブ＝カテゴリ。フォルダの中のタブ＝タグ */
   function paintRail() {
     var rail = $("rail");
@@ -1655,13 +1672,28 @@
         var c = (e.cat || "").trim();
         if (c) cc[c] = (cc[c] || 0) + 1; else noCat++;
       });
-      var cks = Object.keys(cc).sort(function (a, b) { return a.localeCompare(b, "ja"); });
+      var cks = sortCats(Object.keys(cc));
+
+      /* たたんであるときは、いま選んでいるものだけを出す。
+         カテゴリが増えると帯だけで画面がうるさくなるため */
+      if (!railOpen()) {
+        var nm = curCat === "all" ? "すべて" : (curCat === "none" ? "カテゴリなし" : curCat);
+        var cn = curCat === "all" ? exs.length : (curCat === "none" ? noCat : (cc[curCat] || 0));
+        rail.innerHTML = '<button class="tag railtog" id="railMore" aria-pressed="true">'
+          + esc(nm) + '<span class="n">' + cn + '</span><span class="chev"></span></button>';
+        $("railMore").onclick = function () { remember("railshut", ""); paintRail(); };
+        return;
+      }
+
       var h = '<button class="tag" data-c="all" aria-pressed="' + (curCat === "all") + '">すべて<span class="n">' + exs.length + "</span></button>";
       cks.forEach(function (c) {
-        h += '<button class="tag" data-c="' + esc(c) + '" aria-pressed="' + (curCat === c) + '">' + esc(c) + '<span class="n">' + cc[c] + "</span></button>";
+        h += '<button class="tag" data-c="' + esc(c) + '" aria-pressed="' + (curCat === c) + '" data-cat="' + esc(c) + '">' + esc(c) + '<span class="n">' + cc[c] + "</span></button>";
       });
       if (noCat && cks.length) h += '<button class="tag" data-c="none" aria-pressed="' + (curCat === "none") + '">カテゴリなし<span class="n">' + noCat + "</span></button>";
+      h += '<button class="tag railtog shut" id="railLess" aria-label="カテゴリをたたむ"><span class="chev up"></span></button>';
       rail.innerHTML = h;
+      $("railLess").onclick = function () { remember("railshut", "1"); paintRail(); };
+      wireCatHold(rail);
       return;
     }
 
@@ -1672,6 +1704,87 @@
     rail.innerHTML = '<button class="tag" data-t="all" aria-pressed="true">'
       + esc(label) + '<span class="n">' + visible().length + "</span>"
       + '<span class="clearx">×</span></button>';
+  }
+
+  /* カテゴリの札を長押しして、横に並べ替える。
+     タイルの並べ替えと同じ考え方で、こちらは横一列ぶん */
+  function wireCatHold(rail) {
+    if (rail._cathold) return;
+    rail._cathold = true;
+    var timer = null, held = false, node = null, sx = 0, dragging = false;
+    var eat = false, eatTimer = null;
+
+    function lift(n) {
+      n.classList.add("lifted");
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
+    }
+    function drop() {
+      Array.prototype.forEach.call(rail.querySelectorAll(".lifted"), function (n) { n.classList.remove("lifted"); });
+    }
+    function eatClick() {
+      eat = true;
+      clearTimeout(eatTimer);
+      eatTimer = setTimeout(function () { eat = false; }, 400);
+    }
+    function save() {
+      var out = [];
+      Array.prototype.forEach.call(rail.querySelectorAll("[data-cat]"), function (n) {
+        out.push(n.getAttribute("data-cat"));
+      });
+      try { remember("catorder", JSON.stringify(out)); } catch (e) {}
+      toast("この並びで覚えました");
+    }
+
+    rail.addEventListener("dragstart", function (e) { e.preventDefault(); });
+    rail.addEventListener("touchmove", function (e) { if (held) e.preventDefault(); }, { passive: false });
+
+    rail.addEventListener("pointerdown", function (e) {
+      var n = e.target.closest("[data-cat]");
+      if (!n) return;
+      node = n; sx = e.clientX; held = false; dragging = false;
+      clearTimeout(timer);
+      timer = setTimeout(function () { held = true; lift(n); }, 450);
+    });
+
+    rail.addEventListener("pointermove", function (e) {
+      if (!node) return;
+      if (!held) { if (Math.abs(e.clientX - sx) > 9) clearTimeout(timer); return; }
+      if (!dragging) {
+        dragging = true;
+        try { rail.setPointerCapture(e.pointerId); } catch (x) {}
+        rail.classList.add("reordering");
+      }
+      e.preventDefault();
+      /* 指が入っている札の、左半分なら手前、右半分なら後ろへ差し込む */
+      var over = null;
+      Array.prototype.forEach.call(rail.querySelectorAll("[data-cat]"), function (t) {
+        if (t === node) return;
+        var b2 = t.getBoundingClientRect();
+        if (e.clientX >= b2.left && e.clientX <= b2.right) over = t;
+      });
+      if (!over) return;
+      var b3 = over.getBoundingClientRect();
+      rail.insertBefore(node, e.clientX > b3.left + b3.width / 2 ? over.nextSibling : over);
+    });
+
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
+      rail.addEventListener(k, function () {
+        clearTimeout(timer);
+        var wasDrag = dragging, wasHeld = held;
+        held = false; dragging = false; node = null;
+        rail.classList.remove("reordering");
+        drop();
+        if (wasDrag) { eatClick(); save(); return; }
+        if (wasHeld) eatClick();
+      });
+    });
+
+    rail.addEventListener("click", function (e) {
+      if (!eat) return;
+      eat = false;
+      clearTimeout(eatTimer);
+      e.preventDefault(); e.stopPropagation();
+    }, true);
   }
 
   function standalone() {
@@ -6181,7 +6294,7 @@
     else if (k === "back") { b.cards.splice(i, 1); b.cards.unshift(c); }
     else if (k === "left") { c.rot = Math.round(((c.rot || 0) - 5) * 10) / 10; }
     else if (k === "right") { c.rot = Math.round(((c.rot || 0) + 5) * 10) / 10; }
-    saveBoard(b, function () { paintStage(); });
+    saveBoard(b, function () { paint(); });
   }
 
   /* 指で動かす・つまんで大きさと傾きを変える */
@@ -6258,7 +6371,7 @@
           paintStage();
           return;
         }
-        if (wasCard) saveBoard(b, function () { paintBoardBar(b); });
+        if (wasCard) saveBoard(b, function () { paintBoardBar(b); paintEx(); });
       });
     });
   }
@@ -6278,27 +6391,55 @@
         + '<button class="iconbtn" id="bpNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button>'
         + '<button class="iconbtn ok" id="bpOk" aria-label="貼る"><svg><use href="#i-check"/></svg></button>'
         + "</div></div>"
-        + '<div class="panel-body"><div class="hintline" id="bpN">まだ選んでいません</div>'
-        + '<div class="pickgrid">' + all.slice(0, 200).map(function (it) {
-          var src = urlCache[it.thumbId || it.blobId];
-          var ex = exById(it.exId);
-          return '<button class="pickcell" data-pk2="' + esc(it.id) + '" aria-pressed="false">'
-            + '<img src="' + src + '" alt="" loading="lazy">'
-            + '<span class="pkex">' + esc((ex && ex.name) || "") + "</span></button>";
-        }).join("") + "</div></div>", "dialog");
+        + '<div class="panel-body">'
+        + '<div class="seekfield"><svg><use href="#i-search"/></svg>'
+        + '<input id="bpQ" type="search" placeholder="フォルダ名・タグ・メモで絞る" autocomplete="off"></div>'
+        + '<div class="hintline" id="bpN">まだ選んでいません</div>'
+        + '<div class="pickgrid" id="bpGrid"></div></div>', "dialog");
+      noAutofill($("panel"));
 
       function count() {
         var k = Object.keys(take).length;
         $("bpN").textContent = k ? (k + " 枚を選んでいます") : "まだ選んでいません";
       }
-      Array.prototype.forEach.call($("panel").querySelectorAll("[data-pk2]"), function (bt) {
-        bt.onclick = function () {
-          var id = bt.getAttribute("data-pk2");
-          if (take[id]) delete take[id]; else take[id] = 1;
-          bt.setAttribute("aria-pressed", String(!!take[id]));
-          count();
-        };
-      });
+      /* 探すのは、フォルダの名前・カテゴリ・タグ・メモ。
+         どれかに当たれば残す */
+      function hay(it) {
+        var ex = exById(it.exId) || {};
+        return ((ex.name || "") + " " + (ex.cat || "") + " " + (ex.venue || "")
+          + " " + (it.memo || "") + " " + (it.tags || []).join(" ")).toLowerCase();
+      }
+      function fill() {
+        var q = normQ($("bpQ") ? $("bpQ").value : "");
+        var rows = q ? all.filter(function (it) { return hay(it).indexOf(q) >= 0; }) : all;
+        rows = rows.slice(0, 200);
+        var g = $("bpGrid");
+        if (!g) return;
+        if (!rows.length) { g.innerHTML = '<div class="bnone">見つかりませんでした</div>'; return; }
+        g.innerHTML = rows.map(function (it) {
+          var src = urlCache[it.thumbId || it.blobId];
+          var ex = exById(it.exId);
+          return '<button class="pickcell" data-pk2="' + esc(it.id) + '" aria-pressed="'
+            + (!!take[it.id]) + '">'
+            + (src ? '<img src="' + src + '" alt="" loading="lazy">' : "")
+            + '<span class="pkex">' + esc((ex && ex.name) || "") + "</span></button>";
+        }).join("");
+        Array.prototype.forEach.call(g.querySelectorAll("[data-pk2]"), function (bt) {
+          bt.onclick = function () {
+            var id = bt.getAttribute("data-pk2");
+            if (take[id]) delete take[id]; else take[id] = 1;
+            bt.setAttribute("aria-pressed", String(!!take[id]));
+            count();
+          };
+        });
+      }
+      /* 絞ったときに、まだ読み込んでいない写真が出てくることがある */
+      $("bpQ").oninput = function () {
+        var q = normQ(this.value);
+        var rows = (q ? all.filter(function (it) { return hay(it).indexOf(q) >= 0; }) : all).slice(0, 200);
+        ensureUrls(rows.map(function (it) { return it.thumbId || it.blobId; })).then(fill);
+      };
+      fill();
       $("bpNo").onclick = function () { closeSheet(); };
       $("bpOk").onclick = function () {
         var ids = Object.keys(take);
@@ -6313,7 +6454,7 @@
             w: 0.34, rot: 0
           });
         });
-        saveBoard(b, function () { closeSheet(); paintStage(); toast(ids.length + " 枚を貼りました"); });
+        saveBoard(b, function () { closeSheet(); paint(); toast(ids.length + " 枚を貼りました"); });
       };
     });
   }
