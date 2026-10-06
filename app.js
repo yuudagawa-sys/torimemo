@@ -6,6 +6,12 @@
 (function () {
   "use strict";
 
+  /* いまの版。sw.js の CACHE と同じ数にすること。
+     切り替わったかどうかを、画面の側でも分かるようにしてある。
+     黙って新しくなっていると、直したはずのものが
+     届いているのか分からない */
+  var APPVER = "49";
+
   /* ============================================================
      小道具
      ============================================================ */
@@ -1012,6 +1018,7 @@
       loadSkin();
       gauge();
       askPersist();
+      tellVer();
       /* 画面が出てからにする。開いた瞬間に通信を始めると、
          最初の描画がもたつく */
       setTimeout(maybeSync, 2500);
@@ -1066,6 +1073,26 @@
           });
         }).catch(function () {});
       });
+    }
+
+    /* 入れ替わったあとの知らせ。開き直したときに新しくなっていた、
+       という場合はこちらが出る。帯を押す間もなく入れ替わることがあり、
+       そのとき何も出ないと、更新されたのか分からない */
+    function tellVer() {
+      var seen = recall("appver");
+      remember("appver", APPVER);
+      if (!seen || seen === APPVER) return;
+      var d = document.createElement("div");
+      d.className = "upd on";
+      d.id = "verbar";
+      d.innerHTML = '<span>新しい版になりました（v' + esc(APPVER) + "）</span>"
+        + '<button class="updx" id="verX" aria-label="閉じる">閉じる</button>';
+      document.body.appendChild(d);
+      var dock = document.querySelector(".dock");
+      var h = dock ? Math.round(dock.getBoundingClientRect().height) : 92;
+      d.style.bottom = (h + 12) + "px";
+      $("verX").onclick = function () { d.remove(); };
+      setTimeout(function () { if (d.parentNode) d.remove(); }, 12000);
     }
 
     /* 「新しい版があります」の帯。押したときだけ切り替える */
@@ -5291,7 +5318,8 @@
       + '<svg><use href="#i-plus"/></svg></button>'
       + '<input id="restoreIn" type="file" accept=".zip,application/zip" hidden>'
       + '</div></div>'
-      + '<div class="panel-foot"><span class="label">データはこの端末の中だけにあります</span></div>', "dialog");
+      + '<div class="panel-foot"><span class="label">データはこの端末の中だけにあります</span>'
+      + '<span class="label">Rawpo v' + esc(APPVER) + "</span></div>", "dialog");
 
     $("sClose").onclick = closeSheet;
     $("sNew").onclick = function () { closeSheet(); newExDialog(); };
