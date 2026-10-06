@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "50";
+  var APPVER = "52";
 
   /* ============================================================
      小道具
@@ -4631,12 +4631,32 @@
     }).catch(function (e) { toast(why(e), true); });
   }
 
+  /* 共有シートに写真そのものを渡せる端末か。
+     ZIPのままだと、インスタなど「画像を受け取る」相手が出てこない */
+  function canSharePics() {
+    try {
+      return !!(navigator.canShare && navigator.share
+        && navigator.canShare({ files: [new File([""], "a.jpg", { type: "image/jpeg" })] }));
+    } catch (e) { return false; }
+  }
+  var PICMAX = 20;   /* 渡しすぎると共有シートが開かない端末がある */
+
   function exportSheet(ex, src, partial) {
+    var pics = sortItems(src.filter(function (it) {
+      return it.kind === "photo" && it.blobId;
+    }));
 
     sheet('<div class="panel-head"><h3>'
       + (partial ? "選んだ " + src.length + " 件を共有する" : "このフォルダを共有する") + "</h3>"
       + '<button class="iconbtn" id="xClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
+      + ((pics.length && canSharePics())
+          ? '<button class="rowbtn" id="xPics"><div><b>写真だけ（インスタ・LINEへ）</b>'
+            + "<span>写真を1枚ずつ渡します。ZIPだと出てこない相手にも送れます。"
+            + (pics.length > PICMAX ? "はじめの " + PICMAX + " 枚" : pics.length + " 枚")
+            + "を並び順のまま。</span></div>"
+            + '<svg><use href="#i-share"/></svg></button>'
+          : "")
       + '<button class="rowbtn" id="xZip"><div><b>写真とメモ（ZIP）</b>'
       + "<span>写真・動画・録音・書類をまとめて、メモも同梱。相手がRawpoを使っていなくても開けます。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
@@ -4653,6 +4673,38 @@
       + "</div>", "dialog");
 
     $("xClose").onclick = closeSheet;
+
+    var xp = $("xPics");
+    if (xp) xp.onclick = function () {
+      var use = pics.slice(0, PICMAX);
+      closeSheet();
+      progress(5);
+      toast("写真を取り出しています…");
+      var files = [], i = 0;
+      (function next() {
+        if (i >= use.length) {
+          progress(96);
+          if (!files.length) { progress(100); toast("写真を取り出せませんでした。", true); return; }
+          navigator.share({ files: files, title: ex.name }).then(function () {
+            progress(100);
+            toast("送りました（" + files.length + "枚）");
+          }).catch(function (e) {
+            progress(100);
+            if (!e || e.name !== "AbortError") toast(why(e), true);
+          });
+          return;
+        }
+        var it = use[i++];
+        progress(5 + Math.round((i / use.length) * 88));
+        DB.get("blobs", it.blobId).then(function (r) {
+          if (r && r.blob) {
+            /* 名前は並び順の番号にする。相手の端末で順に並ぶ */
+            var nm = pad2(files.length + 1) + "_" + safeName(ex.name) + "." + extOf(it);
+            files.push(new File([r.blob], nm, { type: it.mime || r.blob.type || "image/jpeg" }));
+          }
+        }).catch(function () {}).then(next);
+      })();
+    };
 
     $("xPack").onclick = function () {
       closeSheet();
@@ -5292,6 +5344,90 @@
   }
 
   /* ============================================================
+     使い方・困ったとき
+     ------------------------------------------------------------
+     画面の中に長い説明を置くと、そこだけ文字だらけになる。
+     説明はここに集めて、知りたい人が開くようにする。
+     たたんであるので、開いたときの眺めは短い。
+     ============================================================ */
+  function qa(title, body) {
+    return "<details class=\"qa\"><summary>" + esc(title) + "</summary>"
+      + '<div class="qabody">' + body + "</div></details>";
+  }
+
+  function helpSheet() {
+    sheet('<div class="panel-head"><h3>使い方・困ったとき</h3>'
+      + '<button class="iconbtn" id="hpClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+
+      + '<div class="hintline">Rawpoは、ひとつの出来事ごとにフォルダを作って、'
+      + "その場で撮ったもの・書いたものを放り込んでいくアプリです。</div>"
+
+      + qa("はじめかた",
+          "<p>下の<b>＋ 新しいフォルダ</b>から、出来事ごとにフォルダを1つ作ります。"
+          + "展示会、取材、旅、会議。テンプレートを選ぶと、名前とメモの形が最初から入ります。</p>"
+          + "<p>フォルダを開いて、下の<b>＋</b>から 撮る・写真・音声・動画・書類・メモ。"
+          + "数の上限はありません。手が離せないときは、声で残せます。</p>")
+
+      + qa("並べ替えと、写真を直す",
+          "<p>タイルを<b>長押ししてから指を動かす</b>と、好きな順に並べ替えられます。</p>"
+          + "<p>左上に来たものが、そのままホームでのフォルダの<b>表紙</b>になります。</p>"
+          + "<p>写真を開いて<b>直す</b>を押すと、回す・切り取る・明るさを変えられます。"
+          + "元の写真は残してあるので、いつでも<b>元に戻す</b>が効きます。</p>")
+
+      + qa("さがす",
+          "<p>上の枠にメモ・タグ・名前を打つと、<b>全部のフォルダをまたいで</b>探します。</p>"
+          + "<p>フォルダに「仕事」「旅」などの<b>カテゴリ</b>を付けておくと、"
+          + "ホームの上でそれを押したとき、そのフォルダだけが並びます。</p>"
+          + "<p>★を付けたものだけを並べることもできます。</p>")
+
+      + qa("iPhoneとパソコンで同じ中身にする",
+          "<p>設定 → <b>Googleドライブと同期</b> から、同じGoogleアカウントにつなぎます。"
+          + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、Rawpoのサーバーは通りません。</p>"
+          + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
+          + "手で合わせたいときは「いますぐ同期」を押します。</p>"
+          + "<p>写真は<b>一度送れば二度は送りません</b>。2回目からは記録だけなので、通信はごくわずかです。</p>"
+          + "<p>同じものを両方の端末で直したときは、<b>あとで直したほう</b>が残ります。"
+          + "片方で消して、もう片方でそのあと直していたときは、直したほうが残ります。</p>")
+
+      + qa("セーブデータ（まるごと保存・保存から戻す）",
+          "<p><b>まるごと保存</b>は、いまの中身をひとまとめにしてドライブに置きます。"
+          + "押すたびに前の保存と入れ替わるので、ドライブの中が増えていくことはありません。</p>"
+          + "<p><b>保存から戻す</b>で、そこまで戻せます。いまの中身は消えず、足りないものだけが足されます。</p>"
+          + "<p>ドライブに置いたファイルは<b>Rawpoがまとめた形</b>です。"
+          + "ドライブのアプリで開こうとすると「サポートされていないファイル形式です」と出ますが、"
+          + "壊れているわけではありません。中身を見るときは、Rawpoの「保存から戻す」を使ってください。</p>")
+
+      + qa("機種変更・バックアップ",
+          "<p>設定の<b>まるごとバックアップ</b>で、すべてをZIPにして書き出せます。"
+          + "新しい端末でRawpoを開き、<b>バックアップ／共有されたZIPを読み込む</b>から読ませてください。</p>"
+          + "<p>フォルダ1つだけを人に渡したいときは、そのフォルダを開いて"
+          + "設定 → <b>このフォルダを共有する</b>。相手も同じ読み込み口から開けます。</p>")
+
+      + qa("うまくいかないとき",
+          "<p><b>新しい版が来ない</b><br>アプリをいったん完全に閉じて、開き直してください。"
+          + "いまの版は、この設定画面の見出しの横に出ています（v" + esc(APPVER) + "）。</p>"
+          + "<p><b>「接続が切れました」と出た</b><br>合鍵の期限が切れただけです。"
+          + "設定 → Googleドライブと同期 から、もう一度つなげば直ります。</p>"
+          + "<p><b>一緒に使う人がログインできない</b><br>いまはお試しの段階で、"
+          + "Google側に登録した人しか使えません。その人のGmailを登録する必要があります。</p>"
+          + "<p><b>容量が気になる</b><br>設定の<b>端末の使用量</b>で見られます。"
+          + "写真は取り込むときに縮められます（設定の<b>写真の大きさ</b>で変えられます）。</p>")
+
+      + qa("データはどこにあるか",
+          "<p>写真・録音・動画・メモは、すべて<b>この端末の中</b>にあります。"
+          + "Rawpoのサーバーに送られることはありません。</p>"
+          + "<p>同期をつないだときだけ、<b>あなた自身のGoogleドライブ</b>を通ります。"
+          + "Rawpoが触れるのは、Rawpoが作ったファイルだけです。"
+          + "ドライブのほかのファイルは見えません。</p>")
+
+      + "</div></div>"
+      + '<div class="panel-foot"><span class="label">Rawpo v' + esc(APPVER) + "</span></div>", "dialog");
+
+    $("hpClose").onclick = closeSheet;
+  }
+
+  /* ============================================================
      設定・バックアップ
      ============================================================ */
   function menuDialog() {
@@ -5318,6 +5454,9 @@
       + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
       + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
       + '<svg><use href="#i-star"/></svg></button>'
+      + '<button class="rowbtn" id="sHelp"><div><b>使い方・困ったとき</b>'
+      + "<span>はじめかたから、同期・セーブデータ・うまくいかないときまで</span></div>"
+      + '<svg><use href="#i-help"/></svg></button>'
       + installRow()
       + '<div class="field"><div class="label">端末の使用量</div>'
       + '<div class="gauge"><div class="gaugebar"><i id="gBar" style="width:0%"></i></div>'
@@ -5349,6 +5488,7 @@
       $("gTxt").textContent = "この端末では調べられません";
     }
 
+    $("sHelp").onclick = helpSheet;
     $("sLook").onclick = lookDialog;
     $("sAd").onclick = function () { closeSheet(); removeAdsDialog(); };
     $("sTeam").onclick = teamSheet;

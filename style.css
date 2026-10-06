@@ -315,6 +315,29 @@ main{padding:0 var(--pad) 28px}
   letter-spacing:.02em; color:var(--ink3); vertical-align:1px;
 }
 .panel-body{padding:16px; display:grid; gap:16px}
+/* ヘルプのたたみ項目。開いたときだけ中身が出る */
+.qa{
+  border:1px solid var(--line2); border-radius:var(--r); background:var(--card);
+  overflow:hidden;
+}
+.qa+.qa{margin-top:-8px}
+.qa summary{
+  list-style:none; cursor:pointer; padding:12px 14px;
+  font-size:14px; font-weight:500; color:var(--ink);
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+}
+.qa summary::-webkit-details-marker{display:none}
+.qa summary::after{
+  content:""; flex:0 0 auto; width:8px; height:8px;
+  border-right:1.6px solid var(--ink3); border-bottom:1.6px solid var(--ink3);
+  transform:rotate(45deg) translate(-2px,-2px); transition:transform .15s;
+}
+.qa[open] summary::after{transform:rotate(-135deg) translate(-2px,-2px)}
+.qa summary:hover{background:var(--sunk)}
+.qabody{padding:0 14px 12px; font-size:13px; line-height:1.85; color:var(--ink2)}
+.qabody p{margin:0 0 10px}
+.qabody p:last-child{margin-bottom:0}
+.qabody b{color:var(--ink); font-weight:600}
 .shot{
   width:100%; border-radius:var(--r); background:var(--sunk);
   max-height:46vh; object-fit:contain; display:block;
