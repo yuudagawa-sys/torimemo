@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "58";
+  var APPVER = "59";
 
   /* ============================================================
      小道具
@@ -502,7 +502,7 @@
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
-        throw new Error("ログインが切れました。画面の左上の丸から、もう一度ログインしてください。");
+        throw new Error("ログインが切れました。下の右端にある丸から、もう一度ログインしてください。");
       }
       if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
       return r.status === 204 ? null : r.json();
@@ -1354,6 +1354,12 @@
 
   /* アカウントの丸。ログインしていれば頭文字、していなければ人の形。
      Googleとのやりとりは、ここを押せば全部ある */
+  /* アカウントの頭文字。絵を選んでいないときは、これが丸に出る */
+  function meLetter() {
+    var head = (Shelf.who() || "?").trim().charAt(0).toUpperCase();
+    return /[A-Za-z0-9]/.test(head) ? head : "●";
+  }
+
   function paintMe() {
     var el = $("meBtn");
     if (!el) return;
@@ -1363,9 +1369,8 @@
       el.className = "metab pic" + (Shelf.linked() ? " on" : "");
       el.textContent = "";
     } else if (Shelf.linked()) {
-      var head = (who || "?").trim().charAt(0).toUpperCase();
       el.className = "metab on";
-      el.textContent = /[A-Za-z0-9]/.test(head) ? head : "●";
+      el.textContent = meLetter();
     } else {
       el.className = "metab";
       el.innerHTML = '<svg><use href="#i-me"/></svg>';
@@ -5314,13 +5319,16 @@
     function paintTeam() {
       var on = Shelf.linked();
       var body = on
-        ? '<div class="linked"><b>ログイン中</b><span>'
+        ? '<div class="meblock">'
+            + '<button class="mebig' + (SKIN.me ? " pic" : "") + '" id="tmFace"'
+            + ' aria-label="アイコンの絵を選ぶ"'
+            + (SKIN.me ? " style=\"background-image:url('" + SKIN.me + "')\"" : "") + ">"
+            + (SKIN.me ? "" : esc(meLetter()))
+            + '<span class="meplus"><svg><use href="#i-plus"/></svg></span></button>'
+            + '<div class="mewho"><b>ログイン中</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "このGoogleアカウント") + "</span></div>"
-          + '<button class="rowbtn" id="tmFace"><div><b>アイコンの絵を選ぶ</b>'
-          + "<span>" + (SKIN.me ? "いまは自分で選んだ絵です" : "選ばないあいだは、アカウントの頭文字が出ます")
-          + "</span></div>"
-          + '<svg><use href="#i-cam"/></svg></button>'
-          + (SKIN.me ? '<button class="ghost" id="tmFaceOff" style="width:100%">アイコンの絵をやめる</button>' : "")
+          + "</div>"
+          + (SKIN.me ? '<button class="ghost" id="tmFaceOff" style="width:100%">アイコンの絵をやめて、頭文字に戻す</button>' : "")
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
@@ -5413,7 +5421,7 @@
         }).join("")
           + (list.length < 2
               ? '<div class="hintline">ほかの端末はまだログインしていません。'
-                + "その端末でも、画面の<b>左上の丸</b>から同じGoogleアカウントにログインしてください。</div>"
+                + "その端末でも、画面の<b>下の右端にある丸</b>から同じGoogleアカウントにログインしてください。</div>"
               : "");
       }).catch(function (e) {
         if ($("tmWho")) $("tmWho").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
@@ -5553,7 +5561,7 @@
           + "<p>★を付けたものだけを並べることもできます。</p>")
 
       + qa("iPhoneとパソコンで同じ中身にする",
-          "<p>使う端末それぞれで、画面の<b>左上の丸</b>から同じGoogleアカウントにログインします。"
+          "<p>使う端末それぞれで、画面の<b>下の右端にある丸</b>から同じGoogleアカウントにログインします。"
           + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、Rawpoのサーバーは通りません。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
           + "手で合わせたいときは「いますぐ同期」を押します。</p>"
@@ -5579,9 +5587,9 @@
           "<p><b>新しい版が来ない</b><br>アプリをいったん完全に閉じて、開き直してください。"
           + "いまの版は、この設定画面の見出しの横に出ています（v" + esc(APPVER) + "）。</p>"
           + "<p><b>「ログインが切れました」と出た</b><br>合鍵の期限が切れただけです。"
-          + "左上の丸から、もう一度ログインすれば直ります。</p>"
+          + "下の右端にある丸から、もう一度ログインすれば直ります。</p>"
           + "<p><b>片方の端末にだけ出てこない</b><br>その端末がまだログインしていない可能性があります。"
-          + "左上の丸を押すと、いまログインしている端末が並びます。"
+          + "下の右端にある丸を押すと、いまログインしている端末が並びます。"
           + "そこに出てこない端末では、ログインしてください。</p>"
           + "<p><b>一緒に使う人がログインできない</b><br>いまはお試しの段階で、"
           + "Google側に登録した人しか使えません。その人のGmailを登録する必要があります。</p>"

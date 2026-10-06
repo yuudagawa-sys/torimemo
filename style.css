@@ -1201,6 +1201,30 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 .tplpv{display:grid; gap:7px}
 /* つないだ先の表示。メールアドレスが長くても、見出しのほうは折らない */
 .linked{display:grid; gap:2px; padding:2px 0}
+/* アカウントの顔。大きい丸と、右下の＋で絵を入れ替える */
+.meblock{display:flex; align-items:center; gap:14px; padding:2px 0 4px}
+.mebig{
+  position:relative; flex:0 0 auto; padding:0;
+  width:72px; height:72px; border-radius:999px;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--mark); border:0; color:#fff;
+  font-family:var(--ui); font-size:28px; font-weight:700; line-height:1;
+  background-size:cover; background-position:center;
+}
+/* 絵を入れたときは、頭文字も地の色も出さない */
+.mebig.pic{background-color:transparent; color:transparent}
+.mebig svg{width:30px; height:30px}
+.meplus{
+  position:absolute; right:-2px; bottom:-2px;
+  width:26px; height:26px; border-radius:999px;
+  background:var(--ink); color:var(--paper);
+  border:2.5px solid var(--paper);
+  display:flex; align-items:center; justify-content:center;
+}
+.meplus svg{width:13px; height:13px}
+.mewho{min-width:0}
+.mewho b{display:block; font-size:15px; font-weight:700}
+.mewho span{display:block; font-size:12.5px; color:var(--ink2); line-height:1.6; word-break:break-all}
 /* ログインしている端末の並び */
 .devrow{
   display:flex; align-items:baseline; justify-content:space-between; gap:12px;
