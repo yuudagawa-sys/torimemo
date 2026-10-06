@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "59";
+  var APPVER = "60";
 
   /* ============================================================
      小道具
@@ -93,7 +93,7 @@
 
   /* 時刻を持たせる置き場。blobs は中身が変わらないので要らない。
      変わったかどうかは、それを指しているアイテムのほうで分かる */
-  var TRACKED = ["exhibitions", "items", "templates", "brands"];
+  var TRACKED = ["exhibitions", "items", "templates", "brands", "boards"];
   function tracked(store) { return TRACKED.indexOf(store) >= 0; }
 
   /* keep を立てると、すでに書いてある時刻をそのまま使う。
@@ -116,7 +116,7 @@
   }
 
   var DB = (function () {
-    var NAME = "expo-photo-note", VER = 3, dbp = null;
+    var NAME = "expo-photo-note", VER = 4, dbp = null;
 
     function open() {
       if (dbp) return dbp;
@@ -134,6 +134,7 @@
           if (!d.objectStoreNames.contains("blobs")) d.createObjectStore("blobs", { keyPath: "id" });
           if (!d.objectStoreNames.contains("templates")) d.createObjectStore("templates", { keyPath: "id" });
           if (!d.objectStoreNames.contains("gone")) d.createObjectStore("gone", { keyPath: "id" });
+          if (!d.objectStoreNames.contains("boards")) d.createObjectStore("boards", { keyPath: "id" });
         };
         r.onsuccess = function () { res(r.result); };
         r.onerror = function () { rej(r.error); };
@@ -257,7 +258,8 @@
         });
       },
       wipe: function () {
-        return run(["exhibitions", "brands", "items", "blobs", "gone"], "readwrite", function (t) {
+        return run(["exhibitions", "brands", "items", "blobs", "gone", "boards"], "readwrite", function (t) {
+          t.objectStore("boards").clear();
           t.objectStore("exhibitions").clear();
           t.objectStore("brands").clear();
           t.objectStore("items").clear();
@@ -892,6 +894,15 @@
     for (var i = 0; i < items.length; i++) if (items[i].id === id) return items[i];
     return null;
   };
+  /* フォルダを跨いで引く。ボードはどのフォルダの写真も貼れるので、
+     いま開いているフォルダの中だけを見ていては見つからない */
+  var anyItem = function (id) {
+    var it = itemById(id);
+    if (it) return it;
+    var all = browseAll || [];
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  };
 
   function dropUrls() {
     Object.keys(urlCache).forEach(function (k) {
@@ -1014,10 +1025,11 @@
     wireDrop();
     paintShell();
     migrateCats().then(stampOld).then(trimGone).then(function () {
-      return Promise.all([DB.all("exhibitions"), DB.all("templates")]);
+      return Promise.all([DB.all("exhibitions"), DB.all("templates"), DB.all("boards")]);
     }).then(function (r) {
       exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
       takeTemplates(r[1]);
+      boards = r[2] || [];
       curEx = null;
       screen = "shelf";
       booted = true;
@@ -1590,6 +1602,22 @@
       $("exMeta").innerHTML = bits.map(function (b) { return "<span>" + b + "</span>"; }).join("");
       return;
     }
+    if (screen === "board") {
+      document.documentElement.setAttribute("data-screen", "board");
+      var bd = boardById(curBoard);
+      pick.className = "exbtn back";
+      pick.setAttribute("aria-label", "棚にもどる");
+      t.textContent = (bd && bd.name) || "";
+      if (cb) {
+        cb.innerHTML = '<button class="catcrumb" id="bdSet">'
+          + '<svg><use href="#i-grid"/></svg>'
+          + "<span>" + esc(bd ? paperName(bd) : "") + "</span></button>";
+        var bs = $("bdSet");
+        if (bs) bs.onclick = function () { if (bd) boardDialog(bd); };
+      }
+      $("exMeta").innerHTML = "<span>" + ((bd && bd.cards || []).length) + " 枚</span>";
+      return;
+    }
     document.documentElement.setAttribute("data-screen", "folder");
 
     var ex = exById(curEx);
@@ -1619,6 +1647,7 @@
   function paintRail() {
     var rail = $("rail");
 
+    if (screen === "board") { rail.innerHTML = ""; return; }
     if (screen === "shelf") {
       if (!exs.length) { rail.innerHTML = ""; return; }
       var cc = {}, noCat = 0;
@@ -1885,6 +1914,21 @@
         out.push('<div class="bnone">このカテゴリにはまだフォルダがありません</div>');
       }
 
+      /* ボードはフォルダを跨ぐものなので、カテゴリでは絞らない */
+      if (boards.length && !digging) {
+        out.push('<div class="shelfsec"><div class="label">ボード<span class="n">' + boards.length + "</span></div>");
+        out.push('<div class="bdgrid">');
+        boards.slice().sort(function (x, y) { return (y.upAt || 0) - (x.upAt || 0); }).forEach(function (bd) {
+          var sz = paperSize(bd);
+          out.push('<button class="bdcard" data-board="' + esc(bd.id) + '">'
+            + '<span class="bdpaper" style="aspect-ratio:' + sz.w + "/" + sz.h + '"></span>'
+            + '<span class="bdname">' + esc(bd.name) + "</span>"
+            + '<span class="bdsub">' + esc(paperName(bd)) + " · " + ((bd.cards || []).length) + " 枚</span>"
+            + "</button>");
+        });
+        out.push("</div></div>");
+      }
+
       if (digging) {
         out.push('<div class="shelfsec"><div class="label">写真・メモ<span class="n">'
           + hits.length + (hits.length >= 90 ? "+" : "") + "</span></div>");
@@ -1924,7 +1968,8 @@
     var stage = $("stage"), seq = ++paintSeq;
     if (!booted) return;
 
-    if (!exs.length) { stage.innerHTML = welcome(); return; }
+    if (screen === "board") { paintBoard(stage, seq); return; }
+    if (!exs.length && !boards.length) { stage.innerHTML = welcome(); return; }
     if (screen === "shelf") { paintShelf(stage, seq); return; }
 
     var list = visible();
@@ -2340,12 +2385,19 @@
   /* 棚へ戻る。フォルダが並んでいるところ */
   function goShelf() {
     picking = false; picked = {};
-    screen = "shelf";
+    screen = "shelf"; curBoard = null; boardSel = "";
     clearSearch(); shelfTag = "";
     dropUrls(); items = [];
     return DB.all("items").then(function (all) { browseAll = all; }, function () {})
       .then(function () { paint(); gauge(); });
   }
+
+  /* 棚でボードを押したら開く */
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest("[data-board]");
+    if (!b) return;
+    openBoard(b.getAttribute("data-board"));
+  });
 
   /* フォルダを開く。中の写真・録音・メモが並ぶ */
   function openFolder(id) {
@@ -2374,9 +2426,14 @@
   Array.prototype.forEach.call(document.querySelectorAll("[data-nav]"), function (b) {
     b.onclick = function () {
       var k = b.getAttribute("data-nav");
-      if (k === "home") { if (screen === "folder") goShelf(); else window.scrollTo({ top: 0, behavior: "smooth" }); }
+      if (k === "home") { if (screen !== "shelf") goShelf(); else window.scrollTo({ top: 0, behavior: "smooth" }); }
       else if (k === "tags") { tagSheet(screen === "folder" ? "folder" : "shelf"); return; }
-      else if (k === "add") { if (screen === "shelf") newExDialog(); else addMenu(); return; }
+      else if (k === "add") {
+        if (screen === "board") boardPick();
+        else if (screen === "shelf") makeMenu();
+        else addMenu();
+        return;
+      }
       else { menuDialog(); return; }
       markNav("home");
     };
@@ -4978,15 +5035,16 @@
   /* この端末が持っている記録。写真そのものは入らない */
   function myRecords() {
     return Promise.all([DB.all("exhibitions"), DB.all("items"),
-      DB.all("templates"), DB.all("gone")]).then(function (r) {
-      return { exhibitions: r[0] || [], items: r[1] || [], templates: r[2] || [], gone: r[3] || [] };
+      DB.all("templates"), DB.all("boards"), DB.all("gone")]).then(function (r) {
+      return { exhibitions: r[0] || [], items: r[1] || [], templates: r[2] || [],
+               boards: r[3] || [], gone: r[4] || [] };
     });
   }
 
   /* いちばん新しい更新時刻。前に送ったときと同じなら、送るものは無い */
   function newestAt(rec) {
     var m = 0;
-    ["exhibitions", "items", "templates", "gone"].forEach(function (k) {
+    ["exhibitions", "items", "templates", "boards", "gone"].forEach(function (k) {
       (rec[k] || []).forEach(function (x) { if (Number(x.upAt) > m) m = Number(x.upAt); });
     });
     return m;
@@ -5039,7 +5097,7 @@
       var body = JSON.stringify({
         v: 1, dev: devId(), name: deviceName(), at: Date.now(),
         exhibitions: rec.exhibitions, items: rec.items,
-        templates: rec.templates, gone: rec.gone
+        templates: rec.templates, boards: rec.boards, gone: rec.gone
       });
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () { return null; });
@@ -5062,14 +5120,15 @@
      逆に、消したあとに別の端末で直してあれば、そちらが新しいので残る。
      どちらも時刻の比べ合いなので、迷うところがない。
      ============================================================ */
-  var SYNCED = ["exhibitions", "items", "templates"];
+  var SYNCED = ["exhibitions", "items", "templates", "boards"];
 
   /* 画面の持ちものを、いまのデータベースから作り直す */
   function reloadAll() {
     curEx = null; screen = "shelf"; curCat = "all";
-    return Promise.all([DB.all("exhibitions"), DB.all("templates")]).then(function (r) {
+    return Promise.all([DB.all("exhibitions"), DB.all("templates"), DB.all("boards")]).then(function (r) {
       exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
       takeTemplates(r[1]);
+      boards = r[2] || [];
       remember("ex", "");
       return DB.all("items");
     }).then(function (all) { browseAll = all; }, function () { browseAll = []; })
@@ -5695,18 +5754,20 @@
   function makeBackup(exFilter, itFilter) {
     progress(3);
     toast("まとめています…");
-    var meta = { version: 3, madeAt: new Date().toISOString(), exhibitions: [], items: [], templates: [], gone: [] };
+    var meta = { version: 4, madeAt: new Date().toISOString(), exhibitions: [], items: [], templates: [], boards: [], gone: [] };
     var entries = [], blobIds = [];
 
     /* 一部だけ書き出すときは、消えた記録まで持ち出さない。
        その相手に関係のない削除まで伝えてしまうため */
     var whole = !exFilter && !itFilter;
     return Promise.all([DB.all("exhibitions"), DB.all("items"), DB.all("templates"),
+      whole ? DB.all("boards") : Promise.resolve([]),
       whole ? DB.all("gone") : Promise.resolve([])]).then(function (r) {
       meta.exhibitions = exFilter ? r[0].filter(exFilter) : r[0];
       meta.items = itFilter ? r[1].filter(itFilter) : r[1];
       meta.templates = r[2] || [];
-      meta.gone = r[3] || [];
+      meta.boards = r[3] || [];
+      meta.gone = r[4] || [];
       meta.items.forEach(function (it) {
         if (it.blobId && blobIds.indexOf(it.blobId) < 0) blobIds.push(it.blobId);
         if (it.thumbId && blobIds.indexOf(it.thumbId) < 0) blobIds.push(it.thumbId);
@@ -5755,6 +5816,7 @@
       (meta.brands || []).forEach(function (x) { pairs.push(["brands", x]); });
       (meta.items || []).forEach(function (x) { pairs.push(["items", x]); });
       (meta.templates || []).forEach(function (x) { pairs.push(["templates", x]); });
+      (meta.boards || []).forEach(function (x) { pairs.push(["boards", x]); });
       Object.keys(blobs).forEach(function (id) {
         var it = (meta.items || []).filter(function (x) { return x.blobId === id || x.thumbId === id; })[0];
         var type = it ? (it.thumbId === id && it.kind === "photo" ? "image/jpeg" : (it.mime || "application/octet-stream")) : "application/octet-stream";
@@ -5766,10 +5828,11 @@
          どちらが新しいか分からなくなる */
       return DB.putManyRaw(pairs).then(function () {
         curEx = null; screen = "shelf"; curCat = "all";
-        return Promise.all([DB.all("exhibitions"), DB.all("templates")]);
+        return Promise.all([DB.all("exhibitions"), DB.all("templates"), DB.all("boards")]);
       }).then(function (r) {
         exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
         takeTemplates(r[1]);
+        boards = r[2] || [];
         remember("ex", "");
         closeSheet();
         return goShelf();
@@ -5906,6 +5969,353 @@
     function onKey(e) { if (e.key === "Escape") close(); }
     document.addEventListener("keydown", onKey);
     lensOff = function () { document.removeEventListener("keydown", onKey); };
+  }
+
+  /* ============================================================
+     ボード
+     ------------------------------------------------------------
+     フォルダを跨いで、1枚の紙に写真を貼っていく台。
+     位置も大きさも「紙に対する割合」で持つので、
+     あとから紙の大きさや向きを変えても、貼った並びは崩れない。
+     ============================================================ */
+  var PAPER = {
+    a4: { w: 210, h: 297, name: "A4" },
+    a3: { w: 297, h: 420, name: "A3" },
+    a2: { w: 420, h: 594, name: "A2" }
+  };
+  var LAY = [
+    { k: "p",  name: "縦" },
+    { k: "l",  name: "横" },
+    { k: "sq", name: "正方形" }
+  ];
+  /* 紙の実寸（mm）。向きで入れ替える。正方形は短いほうに合わせる */
+  function paperSize(b) {
+    var p = PAPER[(b && b.paper) || "a4"] || PAPER.a4;
+    if (b && b.lay === "l") return { w: p.h, h: p.w };
+    if (b && b.lay === "sq") return { w: p.w, h: p.w };
+    return { w: p.w, h: p.h };
+  }
+  function paperName(b) {
+    var p = PAPER[(b && b.paper) || "a4"] || PAPER.a4;
+    var l = LAY.filter(function (x) { return x.k === ((b && b.lay) || "p"); })[0];
+    var s = paperSize(b);
+    return p.name + "・" + (l ? l.name : "縦") + "（" + s.w + "×" + s.h + "mm）";
+  }
+
+  var boards = [];
+  var curBoard = null, boardSel = "";
+
+  function boardById(id) {
+    for (var i = 0; i < boards.length; i++) if (boards[i].id === id) return boards[i];
+    return null;
+  }
+  function saveBoard(b, after) {
+    b.cards = b.cards || [];
+    DB.put("boards", b).then(function () {
+      var i = -1;
+      for (var k = 0; k < boards.length; k++) if (boards[k].id === b.id) i = k;
+      if (i < 0) boards.push(b); else boards[i] = b;
+      if (after) after();
+    }).catch(function (e) { toast(why(e), true); });
+  }
+
+  /* 棚の＋。フォルダとボードのどちらを作るか */
+  function makeMenu() {
+    sheet('<div class="panel-head"><h3>新しく作る</h3>'
+      + '<button class="iconbtn" id="mkNo" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + '<button class="rowbtn" id="mkEx"><div><b>フォルダ</b>'
+      + "<span>ひとつの出来事ごとに1つ。写真・録音・メモを放り込みます</span></div>"
+      + '<svg><use href="#i-folder"/></svg></button>'
+      + '<button class="rowbtn" id="mkBd"><div><b>ボード</b>'
+      + "<span>フォルダを跨いで、1枚の紙に写真を貼っていきます</span></div>"
+      + '<svg><use href="#i-grid"/></svg></button>'
+      + "</div></div>", "dialog");
+    $("mkNo").onclick = closeSheet;
+    $("mkEx").onclick = function () { closeSheet(); newExDialog(); };
+    $("mkBd").onclick = function () { closeSheet(); boardDialog(null); };
+  }
+
+  /* 新しく作る・設定を変える */
+  function boardDialog(b) {
+    var mk = !b;
+    var e = b || { id: "", name: "", paper: "a4", lay: "p", cards: [] };
+    var pick = { paper: e.paper || "a4", lay: e.lay || "p" };
+
+    function seg(name, list, cur, key) {
+      return '<div class="field"><div class="label">' + esc(name) + "</div>"
+        + '<div class="segrow">' + list.map(function (x) {
+          return '<button class="seg" data-' + key + '="' + x.k + '" aria-pressed="'
+            + (x.k === cur) + '">' + esc(x.name) + "</button>";
+        }).join("") + "</div></div>";
+    }
+
+    sheet('<div class="panel-head"><h3>' + (mk ? "新しいボード" : "ボードの設定") + "</h3>"
+      + '<button class="iconbtn" id="bdNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + '<div class="field"><label class="label" for="bdName">名前</label>'
+      + '<input class="inp" id="bdName" value="' + esc(e.name) + '" placeholder="参考ボード"></div>'
+      + seg("紙の大きさ", Object.keys(PAPER).map(function (k) { return { k: k, name: PAPER[k].name }; }), pick.paper, "paper")
+      + seg("向き", LAY, pick.lay, "lay")
+      + '<div class="hintline" id="bdSize"></div>'
+      + '<button class="cta" id="bdOk" style="width:100%">' + (mk ? "つくる" : "直す") + "</button>"
+      + (mk ? "" : '<button class="danger" id="bdDel" style="width:100%">このボードを削除</button>')
+      + "</div></div>", "dialog");
+
+    noAutofill($("panel"));
+    function sizeLine() {
+      $("bdSize").textContent = "紙は " + paperName({ paper: pick.paper, lay: pick.lay })
+        + "。あとから変えても、貼った並びは崩れません。";
+    }
+    sizeLine();
+
+    function wire(key) {
+      Array.prototype.forEach.call($("panel").querySelectorAll("[data-" + key + "]"), function (bt) {
+        bt.onclick = function () {
+          pick[key] = bt.getAttribute("data-" + key);
+          Array.prototype.forEach.call($("panel").querySelectorAll("[data-" + key + "]"), function (x) {
+            x.setAttribute("aria-pressed", String(x === bt));
+          });
+          sizeLine();
+        };
+      });
+    }
+    wire("paper"); wire("lay");
+
+    $("bdNo").onclick = closeSheet;
+    $("bdOk").onclick = function () {
+      var nm = ($("bdName").value || "").trim() || "名前のないボード";
+      if (mk) {
+        var rec = { id: uid(), name: nm, paper: pick.paper, lay: pick.lay,
+                    cards: [], createdAt: Date.now() };
+        saveBoard(rec, function () { closeSheet(); openBoard(rec.id); });
+      } else {
+        e.name = nm; e.paper = pick.paper; e.lay = pick.lay;
+        saveBoard(e, function () { closeSheet(); paint(); });
+      }
+    };
+    var dl = $("bdDel");
+    if (dl) dl.onclick = function () {
+      askYesNo({
+        title: "「" + e.name + "」を削除",
+        body: "ボードだけを消します。貼ってあった写真そのものは、フォルダに残ります。",
+        ok: "削除する"
+      }, function () {
+        DB.del("boards", e.id).then(function () {
+          boards = boards.filter(function (x) { return x.id !== e.id; });
+          closeSheet();
+          if (curBoard === e.id) goShelf(); else paint();
+          toast("削除しました");
+        }).catch(function (er) { toast(why(er), true); });
+      });
+    };
+  }
+
+  /* ボードを開く */
+  function openBoard(id) {
+    var b = boardById(id);
+    if (!b) return Promise.resolve();
+    picking = false; picked = {};
+    screen = "board"; curBoard = id; boardSel = "";
+    clearSearch();
+    dropUrls(); items = [];
+    return DB.all("items").then(function (all) { browseAll = all; }, function () {})
+      .then(function () { paint(); });
+  }
+
+  /* 貼ってある写真の実体を用意してから描く */
+  function paintBoard(stage, seq) {
+    var b = boardById(curBoard);
+    if (!b) { goShelf(); return; }
+    var cards = b.cards || [];
+    var need = cards.map(function (c) {
+      var it = anyItem(c.itemId);
+      return it ? (it.blobId || it.thumbId) : null;
+    }).filter(Boolean);
+
+    ensureUrls(need).then(function () {
+      if (seq !== paintSeq) return;
+      var sz = paperSize(b);
+      var out = '<div class="boardwrap">'
+        + '<div class="paper" id="paper" style="aspect-ratio:' + sz.w + "/" + sz.h + '">';
+      cards.forEach(function (c, i) {
+        var it = anyItem(c.itemId);
+        var src = it ? urlCache[it.blobId || it.thumbId] : "";
+        out += '<div class="card' + (c.id === boardSel ? " sel" : "") + '" data-card="' + esc(c.id) + '"'
+          + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
+          + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
+          + (src ? '<img src="' + src + '" alt="" draggable="false">' : '<span class="cardgone">写真がありません</span>')
+          + "</div>";
+      });
+      out += "</div></div>"
+        + '<div class="boardbar" id="boardBar"></div>';
+      stage.innerHTML = out;
+      wireBoard(b);
+      paintBoardBar(b);
+    });
+  }
+
+  function paintBoardBar(b) {
+    var bar = $("boardBar");
+    if (!bar) return;
+    var c = (b.cards || []).filter(function (x) { return x.id === boardSel; })[0];
+    bar.innerHTML = c
+      ? '<button data-bd="back">うしろへ</button>'
+        + '<button data-bd="front">まえへ</button>'
+        + '<button data-bd="left">左へ回す</button>'
+        + '<button data-bd="right">右へ回す</button>'
+        + '<button data-bd="off" class="bad">はずす</button>'
+      : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
+    Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
+      bt.onclick = function () { boardAct(b, bt.getAttribute("data-bd")); };
+    });
+  }
+
+  function boardAct(b, k) {
+    var i = -1;
+    (b.cards || []).forEach(function (c, n) { if (c.id === boardSel) i = n; });
+    if (i < 0) return;
+    var c = b.cards[i];
+    if (k === "off") { b.cards.splice(i, 1); boardSel = ""; }
+    else if (k === "front") { b.cards.splice(i, 1); b.cards.push(c); }
+    else if (k === "back") { b.cards.splice(i, 1); b.cards.unshift(c); }
+    else if (k === "left") { c.rot = Math.round(((c.rot || 0) - 5) * 10) / 10; }
+    else if (k === "right") { c.rot = Math.round(((c.rot || 0) + 5) * 10) / 10; }
+    saveBoard(b, function () { paintStage(); });
+  }
+
+  /* 指で動かす・つまんで大きさと傾きを変える */
+  function wireBoard(b) {
+    var paper = $("paper");
+    if (!paper) return;
+    var pts = {}, n = 0, node = null, card = null;
+    var start = null, moved = false;
+
+    function find(id) {
+      var out = null;
+      (b.cards || []).forEach(function (c) { if (c.id === id) out = c; });
+      return out;
+    }
+    function put() {
+      if (!node || !card) return;
+      node.style.left = (card.x * 100) + "%";
+      node.style.top = (card.y * 100) + "%";
+      node.style.width = (card.w * 100) + "%";
+      node.style.transform = "translate(-50%,-50%) rotate(" + (card.rot || 0) + "deg)";
+    }
+
+    paper.addEventListener("pointerdown", function (e) {
+      var el = e.target.closest("[data-card]");
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      n++;
+      if (n === 1) {
+        node = el; card = el ? find(el.getAttribute("data-card")) : null;
+        moved = false;
+        var r = paper.getBoundingClientRect();
+        start = card ? { x: card.x, y: card.y, w: card.w, rot: card.rot || 0,
+                         px: e.clientX, py: e.clientY, bw: r.width, bh: r.height } : null;
+        if (el) { try { paper.setPointerCapture(e.pointerId); } catch (x) {} }
+      }
+      if (n === 2 && card) {
+        var k = Object.keys(pts), a = pts[k[0]], c2 = pts[k[1]];
+        start.d = Math.hypot(a.x - c2.x, a.y - c2.y);
+        start.a = Math.atan2(c2.y - a.y, c2.x - a.x) * 180 / Math.PI;
+        start.w0 = card.w; start.r0 = card.rot || 0;
+      }
+    });
+
+    paper.addEventListener("pointermove", function (e) {
+      if (!pts[e.pointerId] || !card || !start) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      moved = true;
+      if (n >= 2 && start.d) {
+        var k = Object.keys(pts), a = pts[k[0]], c2 = pts[k[1]];
+        var d = Math.hypot(a.x - c2.x, a.y - c2.y);
+        var ang = Math.atan2(c2.y - a.y, c2.x - a.x) * 180 / Math.PI;
+        card.w = Math.max(0.05, Math.min(1.6, start.w0 * (d / start.d)));
+        card.rot = Math.round((start.r0 + (ang - start.a)) * 10) / 10;
+        put();
+        return;
+      }
+      e.preventDefault();
+      card.x = start.x + (e.clientX - start.px) / start.bw;
+      card.y = start.y + (e.clientY - start.py) / start.bh;
+      /* 紙の外へは出しきらない。つまみ出して見失わないように */
+      card.x = Math.max(-0.1, Math.min(1.1, card.x));
+      card.y = Math.max(-0.1, Math.min(1.1, card.y));
+      put();
+    });
+
+    ["pointerup", "pointercancel"].forEach(function (nm) {
+      paper.addEventListener(nm, function (e) {
+        if (pts[e.pointerId]) { delete pts[e.pointerId]; n = Math.max(0, n - 1); }
+        if (n > 0) return;
+        var wasCard = card, had = node;
+        node = null; card = null; start = null;
+        if (!had) { if (boardSel) { boardSel = ""; paintStage(); } return; }
+        if (!moved) {
+          boardSel = had.getAttribute("data-card");
+          paintStage();
+          return;
+        }
+        if (wasCard) saveBoard(b, function () { paintBoardBar(b); });
+      });
+    });
+  }
+
+  /* 貼る写真を選ぶ。フォルダを跨いで全部から選べる */
+  function boardPick() {
+    var b = boardById(curBoard);
+    if (!b) return;
+    var all = (browseAll || []).filter(function (it) { return it.kind === "photo" && (it.thumbId || it.blobId); });
+    all = sortItems(all);
+    if (!all.length) { toast("貼れる写真がまだありません。", true); return; }
+    var take = {};
+
+    ensureUrls(all.slice(0, 200).map(function (it) { return it.thumbId || it.blobId; })).then(function () {
+      sheet('<div class="panel-head"><h3>貼る写真を選ぶ</h3>'
+        + '<div style="display:flex;gap:8px">'
+        + '<button class="iconbtn" id="bpNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button>'
+        + '<button class="iconbtn ok" id="bpOk" aria-label="貼る"><svg><use href="#i-check"/></svg></button>'
+        + "</div></div>"
+        + '<div class="panel-body"><div class="hintline" id="bpN">まだ選んでいません</div>'
+        + '<div class="pickgrid">' + all.slice(0, 200).map(function (it) {
+          var src = urlCache[it.thumbId || it.blobId];
+          var ex = exById(it.exId);
+          return '<button class="pickcell" data-pk2="' + esc(it.id) + '" aria-pressed="false">'
+            + '<img src="' + src + '" alt="" loading="lazy">'
+            + '<span class="pkex">' + esc((ex && ex.name) || "") + "</span></button>";
+        }).join("") + "</div></div>", "dialog");
+
+      function count() {
+        var k = Object.keys(take).length;
+        $("bpN").textContent = k ? (k + " 枚を選んでいます") : "まだ選んでいません";
+      }
+      Array.prototype.forEach.call($("panel").querySelectorAll("[data-pk2]"), function (bt) {
+        bt.onclick = function () {
+          var id = bt.getAttribute("data-pk2");
+          if (take[id]) delete take[id]; else take[id] = 1;
+          bt.setAttribute("aria-pressed", String(!!take[id]));
+          count();
+        };
+      });
+      $("bpNo").onclick = function () { closeSheet(); };
+      $("bpOk").onclick = function () {
+        var ids = Object.keys(take);
+        if (!ids.length) { closeSheet(); return; }
+        /* まん中あたりから、少しずつずらして重ねて置く */
+        var k = (b.cards || []).length;
+        ids.forEach(function (id, i) {
+          var step = (k + i) % 8;
+          b.cards.push({
+            id: uid(), itemId: id,
+            x: 0.34 + (step % 4) * 0.1, y: 0.3 + Math.floor(step / 4) * 0.22,
+            w: 0.34, rot: 0
+          });
+        });
+        saveBoard(b, function () { closeSheet(); paintStage(); toast(ids.length + " 枚を貼りました"); });
+      };
+    });
   }
 
   /* ============================================================

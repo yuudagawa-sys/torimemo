@@ -473,6 +473,67 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .shotwrap{position:relative}
 .shot.big{cursor:zoom-in}
 
+/* ---------- ボード ---------- */
+/* 棚に並ぶボードの札。紙の形がそのまま出る */
+.bdgrid{display:grid; grid-template-columns:repeat(2,1fr); gap:12px}
+.bdcard{display:block; text-align:left; padding:0}
+.bdpaper{
+  display:block; width:100%; background:var(--card);
+  border:1px solid var(--line2); border-radius:calc(var(--r) * .6);
+  box-shadow:0 1px 3px rgba(24,28,26,.06);
+}
+.bdname{display:block; margin-top:7px; font-size:14px; font-weight:700; color:var(--ink)}
+.bdsub{display:block; margin-top:2px; font-size:11px; color:var(--ink3)}
+
+/* 貼る台。紙はいつも画面の幅いっぱいに収める */
+.boardwrap{padding:4px 0 14px}
+.paper{
+  position:relative; width:100%; margin:0 auto;
+  background:#fff; border:1px solid var(--line2);
+  box-shadow:0 2px 10px rgba(24,28,26,.10);
+  overflow:hidden; touch-action:none;
+}
+.card{position:absolute; line-height:0}
+.card img{display:block; width:100%; height:auto; -webkit-user-drag:none; user-select:none; pointer-events:none}
+.card.sel{outline:2px solid var(--mark); outline-offset:2px}
+.cardgone{
+  display:block; padding:12px; font-size:11px; line-height:1.5;
+  background:var(--sunk); color:var(--ink3);
+}
+/* 選んだ写真に効く帯 */
+.boardbar{
+  display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  padding:10px 0 4px; border-top:1px solid var(--line);
+}
+.boardbar button{
+  padding:7px 12px; border:1px solid var(--line2); border-radius:999px;
+  background:var(--card); font-size:12.5px; color:var(--ink);
+}
+.boardbar button.bad{color:var(--rec); border-color:var(--line2)}
+.bdhint{font-size:12px; color:var(--ink3)}
+
+/* 貼る写真を選ぶ画面 */
+.pickgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:10px}
+.pickcell{position:relative; padding:0; aspect-ratio:1/1; overflow:hidden; border-radius:calc(var(--r) * .5)}
+.pickcell img{width:100%; height:100%; object-fit:cover; display:block}
+.pickcell .pkex{
+  position:absolute; left:0; right:0; bottom:0; padding:3px 5px;
+  font-size:9.5px; color:#fff; background:linear-gradient(transparent, rgba(0,0,0,.55));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left;
+}
+.pickcell[aria-pressed="true"]{outline:3px solid var(--mark); outline-offset:-3px}
+/* 紙の大きさ・向きの選びかた */
+.segrow{display:flex; gap:6px; flex-wrap:wrap}
+.seg{
+  padding:8px 14px; border:1px solid var(--line2); border-radius:999px;
+  background:var(--card); font-size:13px; color:var(--ink2);
+}
+.seg[aria-pressed="true"]{background:var(--ink); border-color:var(--ink); color:var(--paper); font-weight:700}
+
+/* ボードを見ているあいだは、探す枠は要らない */
+:root[data-screen="board"] .seek{display:none}
+:root[data-screen="board"] .rail{display:none}
+
 /* ---------- 1枚を画面いっぱいで見る ---------- */
 .lens{
   position:fixed; inset:0; z-index:120;
