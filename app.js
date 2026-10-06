@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "66";
+  var APPVER = "67";
 
   /* ============================================================
      小道具
@@ -5150,6 +5150,10 @@
      何もしていないのに画面がしゃべり出すと落ち着かない。
      ただし、うまくいかなかったときだけは必ず出す */
   var quietSync = false, syncing = false;
+  /* いま何をしているか。押しても何も起きないように見えるのを防ぐため、
+     走っている最中でも、そのときの様子を言えるようにしておく */
+  var syncSince = 0, syncStep = "";
+  function step(t) { syncStep = t; stoast(t); }
   function stoast(t, bad) { if (bad || !quietSync) toast(t, bad); }
 
   /* まだ送っていないものがあるか。書き込みのたびに立つ */
@@ -5301,7 +5305,7 @@
   function sendChanges() {
     var place = null, rec = null, need = [], sent = 0, changed = false;
     progress(4);
-    stoast("ドライブに接続しています…");
+    step("ドライブに接続しています…");
     return syncPlace().then(function (p) {
       place = p;
       return myRecords();
@@ -5323,7 +5327,7 @@
          「まだログインしていない」ように見えていた。
          記録だけなら数十キロなので、まず確実に置いてしまう */
       progress(12);
-      stoast("記録を送っています…");
+      step("記録を送っています…");
       var body = JSON.stringify({
         v: 1, dev: devId(), name: deviceName(), at: Date.now(),
         exhibitions: rec.exhibitions, items: rec.items,
@@ -5334,12 +5338,14 @@
         remember("sentAt", String(Date.now()));
         remember("sentUpTo", String(newestAt(rec)));
         if (!need.length) return null;
-        stoast("写真を送っています…（" + need.length + "件）");
+        step("写真を送っています…（" + need.length + "件）");
         var i = 0;
         return (function next() {
           if (i >= need.length) return Promise.resolve(null);
           var id = need[i++];
           progress(16 + Math.round((i / need.length) * 30));
+          /* 何枚目かを控える。押したときに「止まっていない」と言えるように */
+          syncStep = "写真を送っています…（" + i + " / " + need.length + "件）";
           return DB.get("blobs", id).then(function (b) {
             if (!b || !b.blob) return null;
             return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
@@ -5455,7 +5461,7 @@
       });
     }).then(function (need) {
       if (!need.length) return null;
-      stoast("写真を取り寄せています…（" + need.length + "件）");
+      step("写真を取り寄せています…（" + need.length + "件）");
       /* 名前から番号を引けるようにしておく。1件ずつ探すと何度も往復する */
       var type = {};
       kept.forEach(function (it) {
@@ -5471,6 +5477,7 @@
           if (i >= need.length) return Promise.resolve(null);
           var id = need[i++];
           progress(74 + Math.round((i / need.length) * 22));
+          syncStep = "写真を取り寄せています…（" + i + " / " + need.length + "件）";
           /* 向こうがまだ写真を上げ終わっていないことがある。
              数えておいて、あとでもう一度降ろしにくる */
           if (!at[id]) { out.miss++; return Promise.resolve().then(next); }
@@ -5501,7 +5508,7 @@
       if (!others.length) return null;
       fresh = others;
       progress(56);
-      stoast("ほかの端末の記録を読んでいます…（" + others.length + "台）");
+      step("ほかの端末の記録を読んでいます…（" + others.length + "台）");
       var box = [], i = 0;
       return (function next() {
         if (i >= others.length) return Promise.resolve(box);
@@ -5537,10 +5544,33 @@
      終わったあとの知らせは、送りと受けをまとめて1つにする。
      別々に出すと、最後の1つしか目に入らない */
   function syncNow(after, quiet) {
-    if (syncing) return;
+    /* すでに走っているときに押されたら、黙って帰らない。
+       写真の初回送信は何分もかかるので、ここで何も言わないと
+       「ボタンが反応しない」ように見える。
+       長く居座っているときだけは、作り直して押し直せるようにする */
+    if (syncing) {
+      if (Date.now() - syncSince < 10 * 60 * 1000) {
+        if (!quiet) {
+          /* 押した人には、終わったときの知らせも見せる */
+          quietSync = false;
+          toast(syncStep ? ("いま同期しています。" + syncStep) : "いま同期しています…");
+        }
+        return;
+      }
+      /* 10分以上戻ってこない。途中で見失ったものとして、やり直す */
+      syncing = false;
+    }
     syncing = true;
+    syncSince = Date.now();
+    syncStep = "";
     quietSync = !!quiet;
     var up = null;
+    function fell(e) {
+      progress(100);
+      syncing = false; quietSync = false; syncStep = "";
+      toast(why(e), true);
+    }
+    try {
     sendChanges().then(function (a) {
       up = a;
       return takeChanges();
@@ -5561,13 +5591,14 @@
       if (!quietSync) toast(said.length ? ("同期しました（" + said.join(" ・ ") + "）") : "変わったものはありませんでした");
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
       unsent = false;
-      syncing = false; quietSync = false;
+      syncing = false; quietSync = false; syncStep = "";
       if (after) after();
-    }).catch(function (e) {
-      progress(100);
-      syncing = false; quietSync = false;
-      toast(why(e), true);
-    });
+    }).catch(fell);
+    } catch (e) {
+      /* 走り出す前に転んだとき。ここで札を戻さないと、
+         二度と押せない体になってしまう */
+      fell(e);
+    }
   }
 
   /* 押さなくても合っている、が目当てなので、開いたときと、
@@ -5625,6 +5656,7 @@
       + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
 
+  var syncWatch = null;
   function teamSheet() {
     function paintTeam() {
       var on = Shelf.linked();
@@ -5643,9 +5675,11 @@
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
           + '<button class="rowbtn" id="tmSync"><div><b>いますぐ同期</b>'
-          + "<span>変わったものを送り、ほかの端末の変わりを受け取ります。"
-          + "写真は一度送れば二度は送りません。"
-          + "最後に同期したのは " + whenTxt(recall("syncAt")) + "</span></div>"
+          + '<span id="tmSyncSay">' + (syncing
+              ? esc(syncStep || "いま同期しています…")
+              : "変わったものを送り、ほかの端末の変わりを受け取ります。"
+                + "写真は一度送れば二度は送りません。"
+                + "最後に同期したのは " + whenTxt(recall("syncAt"))) + "</span></div>"
           + '<svg><use href="#i-sync"/></svg></button>'
           + '<label class="rowbtn" for="tmAuto" style="cursor:pointer"><div><b>開いたときに自動で同期</b>'
           + "<span>ほかのことをして戻ってきたときも、そっと合わせます</span></div>"
@@ -5719,6 +5753,19 @@
         if (dev) remember("devname", dev.value.trim());
         syncNow(function () { teamSheet(); });
       };
+
+      /* 走っている間は、この行に様子を出し続ける。
+         初回は写真が何十枚もあって何分もかかるので、
+         止まっていないことが見えないと、押し直したくなる */
+      clearInterval(syncWatch);
+      syncWatch = setInterval(function () {
+        var e = $("tmSyncSay");
+        if (!e) { clearInterval(syncWatch); syncWatch = null; return; }
+        if (syncing) { e.textContent = syncStep || "いま同期しています…"; return; }
+        e.textContent = "変わったものを送り、ほかの端末の変わりを受け取ります。"
+          + "写真は一度送れば二度は送りません。"
+          + "最後に同期したのは " + whenTxt(recall("syncAt"));
+      }, 1200);
 
       /* ここに出てこない端末は、まだログインしていない。
          「片方だけ出てこない」はたいていこれ */
