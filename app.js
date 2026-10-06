@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "49";
+  var APPVER = "50";
 
   /* ============================================================
      小道具
@@ -5207,7 +5207,18 @@
       var push = $("tmPush");
       if (push) push.onclick = function () {
         if (dev) remember("devname", dev.value.trim());
-        pushAll(function () { teamSheet(); });
+        /* ひと押しで何メガも送るので、先に行き先と大きさを伝える */
+        var size = (browseAll || []).reduce(function (a, b) { return a + (b.bytes || 0); }, 0);
+        askYesNo({
+          title: "まるごと保存",
+          body: "いまのフォルダ・写真・メモをひとつにまとめて、"
+            + "あなた自身のGoogleドライブの「Rawpo」フォルダに置きます。"
+            + "名前は Rawpo_まるごと_" + deviceName() + ".zip です。"
+            + (size ? "だいたい " + mb(size) + " を送ります。" : "")
+            + "前の保存と入れ替わるので、ドライブの中が増えていくことはありません。",
+          ok: "保存する",
+          safe: true
+        }, function () { pushAll(function () { teamSheet(); }); });
       };
 
       var pull = $("tmPull");
@@ -5285,7 +5296,8 @@
      ============================================================ */
   function menuDialog() {
     sheet('<div class="panel-head">'
-      + '<h3><span style="color:var(--mark)">Raw</span>po</h3>'
+      + '<h3><span style="color:var(--mark)">Raw</span>po'
+      + '<span class="ver">v' + esc(APPVER) + "</span></h3>"
       + '<button class="iconbtn" id="sClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
       + '<button class="rowbtn" id="sNew"><div><b>新しく作る</b>'
@@ -5318,8 +5330,7 @@
       + '<svg><use href="#i-plus"/></svg></button>'
       + '<input id="restoreIn" type="file" accept=".zip,application/zip" hidden>'
       + '</div></div>'
-      + '<div class="panel-foot"><span class="label">データはこの端末の中だけにあります</span>'
-      + '<span class="label">Rawpo v' + esc(APPVER) + "</span></div>", "dialog");
+      + '<div class="panel-foot"><span class="label">データはこの端末の中だけにあります</span></div>', "dialog");
 
     $("sClose").onclick = closeSheet;
     $("sNew").onclick = function () { closeSheet(); newExDialog(); };
