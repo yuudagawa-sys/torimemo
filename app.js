@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "72";
+  var APPVER = "73";
 
   /* ============================================================
      小道具
@@ -1736,6 +1736,7 @@
       }
       $("exMeta").innerHTML = bd
         ? "<span>" + pagesOf(bd).length + " ページ</span><span>" + boardCount(bd) + " 枚</span>"
+          + (boardWords(bd) ? "<span>文字 " + boardWords(bd) + "</span>" : "")
         : "";
       return;
     }
@@ -2167,23 +2168,22 @@
           var pg = pagesOf(bd)[0] || { cards: [] };
           var mini = "";
           (pg.cards || []).forEach(function (c, i) {
-            var it = anyItem(c.itemId);
+            var it = isText(c) ? null : anyItem(c.itemId);
             var src = it ? urlCache[it.thumbId || it.blobId] : "";
-            if (!src) return;
-            mini += '<span class="bdbit' + (cutOf(c) ? " cut" : "") + '"'
+            if (!isText(c) && !src) return;
+            mini += '<span class="bdbit' + (isText(c) ? " tx" : (cutOf(c) ? " cut" : "")) + '"'
               + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
-              + cardFrame(it, c)
+              + (isText(c) ? "" : cardFrame(it, c))
               + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
-              + cardInner(it, src, c) + "</span>";
+              + (isText(c) ? txInner(c) : cardInner(it, src, c)) + "</span>";
           });
           /* 貼ってあるのに1枚も描けないときは、写真がまだ届いていない。
              真っ白な紙だけ出して黙っていると、壊れたように見える */
-          if (!mini && boardCount(bd)) mini = '<span class="bdwait">写真を取り寄せ中</span>';
+          if (!mini && (boardCount(bd) || boardWords(bd))) mini = '<span class="bdwait">写真を取り寄せ中</span>';
           out.push('<button class="bdcard" data-board="' + esc(bd.id) + '">'
             + '<span class="bdpaper" style="aspect-ratio:' + sz.w + "/" + sz.h + '">' + mini + "</span>"
             + '<span class="bdname">' + esc(bd.name) + "</span>"
-            + '<span class="bdsub">' + esc(paperName(bd)) + " · "
-            + pagesOf(bd).length + " ページ · " + boardCount(bd) + " 枚</span>"
+            + '<span class="bdsub">' + esc(paperName(bd)) + " · " + esc(boardSub(bd)) + "</span>"
             + "</button>");
         });
         out.push("</div></div>");
@@ -2212,6 +2212,8 @@
       }
 
       stage.innerHTML = out.join("");
+      /* 下絵の中の文字も、紙の幅から大きさが決まる */
+      sizeText();
       wireFolderHold(stage);
       var cf = $("clrFav");
       if (cf) cf.onclick = function () {
@@ -2691,7 +2693,7 @@
       if (k === "home") { if (screen !== "shelf") goShelf(); else window.scrollTo({ top: 0, behavior: "smooth" }); }
       else if (k === "tags") { tagSheet(screen === "folder" ? "folder" : "shelf"); return; }
       else if (k === "add") {
-        if (screen === "board") boardPick();
+        if (screen === "board") boardAddMenu();
         else if (screen === "shelf") makeMenu();
         else addMenu();
         return;
@@ -6546,6 +6548,57 @@
     return "aspect-ratio:" + r3(cardRatio(it, c)) + ";";
   }
 
+  /* ============================================================
+     文字のカード
+     ------------------------------------------------------------
+     写真と同じ「紙に貼ったもの」として扱う。置きかた（x・y・幅・傾き）は
+     写真とまったく同じ決まりなので、動かすところは作り直さずに済む。
+     違うのは中身だけ。
+
+     文字の大きさは「紙の幅に対する割合」で持つ。画面の大きさや
+     紙の種類が変わっても、刷ったときの見た目が変わらない。
+     ============================================================ */
+  function isText(c) { return !!c && c.kind === "text"; }
+
+  var TXCOL = [
+    { k: "ink",   t: "すみ",   c: "#1C1D1F" },
+    { k: "white", t: "白",     c: "#FFFFFF" },
+    { k: "mark",  t: "朱",     c: "#C2453A" },
+    { k: "gray",  t: "うすずみ", c: "#7A7E7C" }
+  ];
+  function txColor(c) {
+    var k = (c && c.color) || "ink";
+    for (var i = 0; i < TXCOL.length; i++) if (TXCOL[i].k === k) return TXCOL[i].c;
+    return TXCOL[0].c;
+  }
+  var TXALIGN = [
+    { k: "left", t: "左" }, { k: "center", t: "中" }, { k: "right", t: "右" }
+  ];
+  /* 文字の大きさ。紙の幅に対する割合で持つ */
+  var TXSIZE = { min: 0.015, max: 0.14, def: 0.045 };
+  function txSize(c) {
+    var v = Number(c && c.size) || TXSIZE.def;
+    return Math.max(TXSIZE.min, Math.min(TXSIZE.max, v));
+  }
+  /* 刷るときにも同じ書体で出したい。canvas にもそのまま渡せる並び。
+     名前は一重引用符でくくる。style="..." の中に入れるので、
+     二重引用符だと属性がそこで切れてしまう */
+  function txFamily(c) {
+    return (c && c.face === "gothic")
+      ? "'Zen Kaku Gothic New', 'Hiragino Sans', system-ui, sans-serif"
+      : "'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif";
+  }
+  function txInner(c) {
+    var t = String(c.text || "");
+    return '<span class="txin" style="font-size:calc(var(--pw, 360px) * ' + r3(txSize(c)) + ");"
+      + "text-align:" + ((c.align === "center" || c.align === "right") ? c.align : "left") + ";"
+      + "color:" + txColor(c) + ";"
+      + "font-weight:" + (c.bold ? 700 : 400) + ";"
+      + "font-family:" + txFamily(c) + '">'
+      + (t ? esc(t).replace(/\n/g, "<br>") : '<i class="txempty">文字を入れてください</i>')
+      + "</span>";
+  }
+
   var PAPER = {
     a4: { w: 210, h: 297, name: "A4" },
     a3: { w: 297, h: 420, name: "A3" },
@@ -6609,10 +6662,27 @@
     return ps[best] || ps[ps.length - 1];
   }
 
+  /* 「枚」は写真の数。文字は枚数に混ぜない。
+     混ぜると、2枚しか貼っていないのに3枚と出て、数が合わなくなる */
   function boardCount(b) {
     var n = 0;
-    pagesOf(b).forEach(function (pg) { n += (pg.cards || []).length; });
+    pagesOf(b).forEach(function (pg) {
+      (pg.cards || []).forEach(function (c) { if (!isText(c)) n++; });
+    });
     return n;
+  }
+  function boardWords(b) {
+    var n = 0;
+    pagesOf(b).forEach(function (pg) {
+      (pg.cards || []).forEach(function (c) { if (isText(c)) n++; });
+    });
+    return n;
+  }
+  /* 棚などに出す「1 ページ · 2 枚 · 文字 1」 */
+  function boardSub(b) {
+    var s = pagesOf(b).length + " ページ · " + boardCount(b) + " 枚";
+    var w = boardWords(b);
+    return w ? (s + " · 文字 " + w) : s;
   }
 
   /* 目安の線。紙の横幅を8つに割った幅を1ますとし、
@@ -6786,14 +6856,14 @@
           + '<div class="boardwrap">'
           + '<div class="paper" data-page="' + n + '" style="aspect-ratio:' + sz.w + "/" + sz.h + '">';
         (pg.cards || []).forEach(function (c, i) {
-          var it = anyItem(c.itemId);
+          var it = isText(c) ? null : anyItem(c.itemId);
           var src = it ? urlCache[it.blobId || it.thumbId] : "";
           out += '<div class="card' + (c.id === boardSel ? " sel" : "")
-            + (cutOf(c) ? " cut" : "") + '" data-card="' + esc(c.id) + '"'
+            + (isText(c) ? " tx" : (cutOf(c) ? " cut" : "")) + '" data-card="' + esc(c.id) + '"'
             + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
-            + cardFrame(it, c)
+            + (isText(c) ? "" : cardFrame(it, c))
             + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
-            + cardInner(it, src, c)
+            + (isText(c) ? txInner(c) : cardInner(it, src, c))
             + "</div>";
         });
         out += "</div></div>";
@@ -6805,10 +6875,29 @@
         var el = stage.querySelector('.paper[data-page="' + n + '"]');
         if (el) { paintGrid(b, el); wireBoard(b, pg, el); }
       });
+      /* 文字の大きさは紙の幅から決まる。実寸を測って配っておく */
+      sizeText();
       wirePager(b);
       paintFix(b);
     });
   }
+
+  /* 紙の実寸を、その紙の中へ配る。
+     文字の大きさは「紙の幅に対する割合」なので、これが無いと決まらない。
+     窓の大きさが変わるたびに測り直す */
+  function sizeText() {
+    Array.prototype.forEach.call(document.querySelectorAll(".paper[data-page]"), function (el) {
+      el.style.setProperty("--pw", Math.round(el.clientWidth) + "px");
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".bdpaper"), function (el) {
+      el.style.setProperty("--pw", Math.round(el.clientWidth) + "px");
+    });
+  }
+  var sizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(sizeText, 120);
+  });
 
   /* 下の帯。いつも同じ高さで、同じところに居る。
      高さが変わると画面が跳ねるので、2行ぶんを決め打ちで取る */
@@ -6934,8 +7023,10 @@
         + '<button data-bd="front">前へ</button>'
         + '<button data-bd="left" class="turn" aria-label="左へ回す" title="左へ回す">↺</button>'
         + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
-        + '<button data-bd="cut" aria-label="切り取り" title="切り取り"'
-        + (cutOf(c) ? ' class="on"' : "") + ">切る</button>"
+        + (isText(c)
+            ? '<button data-bd="edit">文字</button>'
+            : '<button data-bd="cut" aria-label="切り取り" title="切り取り"'
+              + (cutOf(c) ? ' class="on"' : "") + ">切る</button>")
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
@@ -6948,12 +7039,124 @@
     if (!hit) return;
     var page = hit.page, i = hit.i, c = hit.card;
     if (k === "cut") { cutSheet(b, c); return; }
+    if (k === "edit") { textSheet(b, c); return; }
     if (k === "off") { page.cards.splice(i, 1); boardSel = ""; }
     else if (k === "front") { page.cards.splice(i, 1); page.cards.push(c); }
     else if (k === "back") { page.cards.splice(i, 1); page.cards.unshift(c); }
     else if (k === "left") { c.rot = Math.round(((c.rot || 0) - 5) * 10) / 10; }
     else if (k === "right") { c.rot = Math.round(((c.rot || 0) + 5) * 10) / 10; }
     saveBoard(b, function () { paint(); });
+  }
+
+  /* ============================================================
+     文字を足す・直す
+     ------------------------------------------------------------
+     文字も「紙に貼ったもの」なので、置きかたは写真とまったく同じ。
+     ここで決めるのは中身・大きさ・そろえ・色・太さ・書体だけ。
+     ============================================================ */
+  function addText(b) {
+    var page = shownPage(b);
+    var c = {
+      id: uid(), kind: "text", text: "",
+      x: 0.5, y: 0.5, w: 0.6, rot: 0,
+      size: TXSIZE.def, align: "left", color: "ink", bold: false, face: "mincho"
+    };
+    page.cards.push(c);
+    boardSel = c.id;
+    saveBoard(b, function () { paint(); textSheet(b, c, true); });
+  }
+
+  function textSheet(b, c, fresh) {
+    var was = JSON.parse(JSON.stringify(c));
+
+    sheet('<div class="panel-head"><h3>' + (fresh ? "文字を入れる" : "文字を直す") + "</h3>"
+      + '<div style="display:flex;gap:8px">'
+      + '<button class="iconbtn" id="txNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button>'
+      + '<button class="iconbtn ok" id="txOk" aria-label="決める"><svg><use href="#i-check"/></svg></button>'
+      + "</div></div>"
+      + '<div class="panel-body"><div class="stack">'
+      + '<div class="field"><label class="label" for="txText">文字</label>'
+      + '<textarea class="ta" id="txText" rows="3" placeholder="見出し、ひとこと、日付など">'
+      + esc(c.text || "") + "</textarea></div>"
+      + '<div class="txprev" id="txPrev"></div>'
+      + '<div class="field"><label class="label" for="txSize">大きさ</label>'
+      + '<input type="range" id="txSize" min="' + Math.round(TXSIZE.min * 1000) + '" max="'
+      + Math.round(TXSIZE.max * 1000) + '" step="1" style="width:100%"></div>'
+      + '<div class="label">そろえ</div><div class="segrow" id="txAlign"></div>'
+      + '<div class="label" style="margin-top:8px">色</div><div class="segrow" id="txColor"></div>'
+      + '<div class="label" style="margin-top:8px">書体</div><div class="segrow" id="txFace"></div>'
+      + '<label class="rowbtn" for="txBold" style="cursor:pointer"><div><b>太くする</b>'
+      + "<span>見出しに使うときに</span></div>"
+      + '<input type="checkbox" id="txBold"' + (c.bold ? " checked" : "") + "></label>"
+      + '<button class="danger" id="txDel" style="width:100%">この文字を消す</button>'
+      + "</div></div>", "dialog");
+
+    function draw() {
+      var pv = $("txPrev");
+      if (pv) {
+        /* 下書きは紙の幅ではなく、この枠の幅を基準にする。
+           紙に対する割合は変わらないので、刷ったときの見え方と同じ */
+        pv.style.setProperty("--pw", Math.round(pv.clientWidth / Math.max(0.05, c.w)) + "px");
+        pv.innerHTML = txInner(c);
+      }
+      var z = $("txSize");
+      if (z) z.value = String(Math.round(txSize(c) * 1000));
+      [["txAlign", "align"], ["txColor", "color"], ["txFace", "face"]].forEach(function (pair) {
+        var box = $(pair[0]);
+        if (!box) return;
+        Array.prototype.forEach.call(box.querySelectorAll("[data-v]"), function (bt) {
+          bt.setAttribute("aria-pressed", String(bt.getAttribute("data-v") === String(c[pair[1]] || "")));
+        });
+      });
+    }
+
+    $("txAlign").innerHTML = TXALIGN.map(function (x) {
+      return '<button class="seg" data-v="' + x.k + '">' + esc(x.t) + "</button>";
+    }).join("");
+    $("txColor").innerHTML = TXCOL.map(function (x) {
+      return '<button class="seg" data-v="' + x.k + '">'
+        + '<span class="txdot" style="background:' + x.c + '"></span>' + esc(x.t) + "</button>";
+    }).join("");
+    $("txFace").innerHTML = [{ k: "mincho", t: "明朝" }, { k: "gothic", t: "ゴシック" }]
+      .map(function (x) { return '<button class="seg" data-v="' + x.k + '">' + esc(x.t) + "</button>"; }).join("");
+
+    [["txAlign", "align"], ["txColor", "color"], ["txFace", "face"]].forEach(function (pair) {
+      Array.prototype.forEach.call($(pair[0]).querySelectorAll("[data-v]"), function (bt) {
+        bt.onclick = function () { c[pair[1]] = bt.getAttribute("data-v"); draw(); };
+      });
+    });
+    $("txText").oninput = function () { c.text = this.value; draw(); };
+    $("txSize").oninput = function () { c.size = Number(this.value) / 1000; draw(); };
+    $("txBold").onchange = function () { c.bold = this.checked; draw(); };
+
+    function drop() {
+      var hit = selOf(b);
+      if (hit) hit.page.cards.splice(hit.i, 1);
+      boardSel = "";
+    }
+    $("txDel").onclick = function () {
+      drop();
+      saveBoard(b, function () { closeSheet(); paint(); toast("消しました"); });
+    };
+    $("txNo").onclick = function () {
+      if (fresh) { drop(); saveBoard(b, function () { closeSheet(); paint(); }); return; }
+      Object.keys(c).forEach(function (k) { delete c[k]; });
+      Object.keys(was).forEach(function (k) { c[k] = was[k]; });
+      closeSheet(); paint();
+    };
+    $("txOk").onclick = function () {
+      /* 何も書かずに決めたら、置かない。白い紙に空の箱が残らないように */
+      if (!String(c.text || "").trim()) {
+        drop();
+        saveBoard(b, function () { closeSheet(); paint(); toast("文字が空だったので置きませんでした"); });
+        return;
+      }
+      saveBoard(b, function () { closeSheet(); paint(); });
+    };
+
+    draw();
+    var ta = $("txText");
+    if (ta && fresh) ta.focus();
   }
 
   /* ============================================================
@@ -7163,17 +7366,43 @@
   /* 印刷に耐える大きさで描く。画面に出している目安の線は描かない */
   var BOARD_DPI = 150;
 
+  /* 文字を、箱の幅で折り返す。日本語はどこでも折れるので1字ずつ見るが、
+     英単語の途中では折らないよう、空白があればそこを優先する */
+  function wrapText(g, s, max) {
+    var out = [];
+    String(s || "").split("\n").forEach(function (para) {
+      if (!para) { out.push(""); return; }
+      var line = "";
+      for (var i = 0; i < para.length; i++) {
+        var ch = para[i];
+        if (g.measureText(line + ch).width <= max || !line) { line += ch; continue; }
+        /* 英字の途中なら、直前の空白まで戻す */
+        var cut = /[A-Za-z0-9]/.test(ch) ? line.lastIndexOf(" ") : -1;
+        if (cut > 0) { out.push(line.slice(0, cut)); line = line.slice(cut + 1) + ch; }
+        else { out.push(line); line = ch; }
+      }
+      out.push(line);
+    });
+    return out;
+  }
+  var TX_LEAD = 1.55;   /* 行と行のあいだ。画面のCSSと同じにする */
+
   /* 1ページぶんを絵にする。写真は画面用の小さいほうではなく、元の大きさを使う */
   function renderPage(b, page, onStep) {
-    var cards = (page.cards || []).filter(function (c) { return anyItem(c.itemId); });
+    var cards = (page.cards || []).filter(function (c) {
+      return isText(c) ? String(c.text || "").trim() : anyItem(c.itemId);
+    });
     var sz = paperSize(b);
     var W = Math.round(sz.w / 25.4 * BOARD_DPI);
     var H = Math.round(sz.h / 25.4 * BOARD_DPI);
-    var need = cards.map(function (c) {
+    var need = cards.filter(function (c) { return !isText(c); }).map(function (c) {
       var it = anyItem(c.itemId);
       return it.blobId || it.thumbId;
     });
-    return ensureUrls(need).then(function () {
+    /* 書体が届く前に刷ると、画面と違う字で出てしまう */
+    var ready = (document.fonts && document.fonts.ready)
+      ? document.fonts.ready.catch(function () {}) : Promise.resolve();
+    return ready.then(function () { return ensureUrls(need); }).then(function () {
       var cv = document.createElement("canvas");
       cv.width = W; cv.height = H;
       var g = cv.getContext("2d");
@@ -7185,6 +7414,27 @@
           if (i >= cards.length) { done(cv); return; }
           var c = cards[i++];
           if (onStep) onStep(i, cards.length);
+          if (isText(c)) {
+            /* 画面と同じ置きかたで、同じ書体・同じ行間で刷る */
+            var fs = txSize(c) * W;
+            var bw = c.w * W;
+            g.save();
+            g.translate(c.x * W, c.y * H);
+            g.rotate((c.rot || 0) * Math.PI / 180);
+            g.font = (c.bold ? "700 " : "400 ") + fs + "px " + txFamily(c);
+            g.fillStyle = txColor(c);
+            g.textBaseline = "alphabetic";
+            var lines = wrapText(g, c.text, bw);
+            var lh = fs * TX_LEAD;
+            var top = -(lines.length * lh) / 2 + (lh - fs) / 2 + fs * 0.82;
+            var al = (c.align === "center" || c.align === "right") ? c.align : "left";
+            g.textAlign = al === "center" ? "center" : (al === "right" ? "right" : "left");
+            var ax = al === "center" ? 0 : (al === "right" ? bw / 2 : -bw / 2);
+            lines.forEach(function (ln, k) { g.fillText(ln, ax, top + k * lh); });
+            g.restore();
+            next();
+            return;
+          }
           var it = anyItem(c.itemId);
           var src = urlCache[it.blobId || it.thumbId];
           if (!src) { next(); return; }
@@ -7357,6 +7607,25 @@
   }
 
   /* 貼る写真を選ぶ。フォルダを跨いで全部から選べる */
+  /* ボードの＋。棚の＋と同じように、何を足すかを先に選ぶ */
+  function boardAddMenu() {
+    var b = boardById(curBoard);
+    if (!b) return;
+    sheet('<div class="panel-head"><h3>紙に足す</h3>'
+      + '<button class="iconbtn" id="baNo" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + '<button class="rowbtn" id="baPic"><div><b>写真を貼る</b>'
+      + "<span>フォルダを跨いで、全部の中から選べます</span></div>"
+      + '<svg><use href="#i-cam"/></svg></button>'
+      + '<button class="rowbtn" id="baTx"><div><b>文字を入れる</b>'
+      + "<span>見出し、ひとこと、日付など。大きさ・色・書体を選べます</span></div>"
+      + '<svg><use href="#i-note"/></svg></button>'
+      + "</div></div>", "dialog");
+    $("baNo").onclick = closeSheet;
+    $("baPic").onclick = function () { closeSheet(); boardPick(); };
+    $("baTx").onclick = function () { closeSheet(); addText(b); };
+  }
+
   function boardPick() {
     var b = boardById(curBoard);
     if (!b) return;

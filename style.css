@@ -2004,3 +2004,31 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
     linear-gradient(to bottom, transparent 33.33%, rgba(255,255,255,.45) 33.33%, rgba(255,255,255,.45) 33.5%, transparent 33.5%,
       transparent 66.66%, rgba(255,255,255,.45) 66.66%, rgba(255,255,255,.45) 66.83%, transparent 66.83%);
 }
+
+/* ================= 文字のカード =================
+   写真と同じ「紙に貼ったもの」。違うのは中身だけ。
+   大きさは紙の幅から決まるので、刷っても見た目が変わらない */
+.paper .card.tx,
+.bdbit.tx{
+  border:0; background:transparent; overflow:visible; line-height:normal;
+  box-shadow:none;
+}
+.txin{
+  display:block; line-height:1.55; white-space:pre-wrap;
+  overflow-wrap:anywhere; word-break:normal;
+  pointer-events:none; user-select:none; -webkit-user-select:none;
+}
+.txempty{color:#9AA09C; font-style:normal}
+/* 空の箱でもつまめるよう、うっすら枠を出す（刷るときには出ない） */
+.paper .card.tx:empty,
+.paper .card.tx .txempty{outline:1px dashed var(--line2)}
+
+/* 文字を直す画面の下書き */
+.txprev{
+  background:#fff; border:1px solid var(--line2); border-radius:var(--r);
+  padding:14px; min-height:64px; overflow:hidden;
+}
+.txdot{
+  display:inline-block; width:10px; height:10px; border-radius:999px;
+  border:1px solid rgba(0,0,0,.18); margin-right:6px; vertical-align:-1px;
+}
