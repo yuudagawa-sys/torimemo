@@ -505,6 +505,8 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 }
 /* 紙の上に置いた1枚。ボード画面と同じ置きかたを、そのまま小さく */
 .bdbit{position:absolute; display:block; line-height:0}
+.bdbit img{display:block; width:100%; height:auto}
+.bdbit.cut{overflow:hidden}
 /* まだ写真が届いていないボード */
 .bdwait{
   position:absolute; left:0; right:0; top:50%; transform:translateY(-50%);
@@ -524,6 +526,9 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .card{position:absolute; line-height:0}
 .card img{display:block; width:100%; height:auto; -webkit-user-drag:none; user-select:none; pointer-events:none}
 .card.sel{outline:2px solid var(--mark); outline-offset:2px}
+/* 切り取ったカード。枠の形は決め打ちで、はみ出したぶんは見せない */
+.paper .card.cut{overflow:hidden}
+.paper .card.cut img{width:auto; height:auto}
 .cardgone{
   display:block; padding:12px; font-size:11px; line-height:1.5;
   background:var(--sunk); color:var(--ink3);
@@ -574,18 +579,20 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 /* 選んだ写真に効く帯。高さは出し入れで変わらないよう決め打ち。
    入りきらないときは横に送れる */
 .boardbar{
-  display:flex; gap:6px; flex-wrap:nowrap; align-items:center;
+  display:flex; gap:5px; flex-wrap:nowrap; align-items:center;
   /* 出し入れで高さが変わらないよう、決め打ちで取る */
   padding:0; height:44px; box-sizing:border-box;
   overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none;
 }
 .boardbar::-webkit-scrollbar{display:none}
 .boardbar button{
-  padding:7px 12px; border:1px solid var(--line2); border-radius:999px;
+  /* 1列に6つ並ぶ。狭い端末でも端が切れないよう、左右は詰めてある */
+  padding:7px 10px; border:1px solid var(--line2); border-radius:999px;
   background:var(--card); font-size:12.5px; color:var(--ink);
   flex:0 0 auto; white-space:nowrap;
 }
 .boardbar button.bad{color:var(--rec); border-color:var(--line2)}
+.boardbar button.on{background:var(--ink); border-color:var(--ink); color:var(--paper)}
 .boardbar button.turn{font-size:16px; line-height:1; padding:5px 11px}
 .bdhint{font-size:12px; color:var(--ink3); white-space:nowrap}
 /* 下の余白は、帯の高さを測って付ける（paintFix）*/
@@ -1972,3 +1979,28 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   animation:spin 1s linear infinite;
 }
 .tabbar .metab{position:relative}
+
+
+/* ================= 切り取り（ボードに貼った1枚の見せ方） =================
+   元の写真は切らない。枠の形と、どこを見せるかを決めるだけ */
+.cutwrap{
+  display:flex; justify-content:center; align-items:center;
+  background:var(--sunk); border:1px solid var(--line2); border-radius:var(--r);
+  padding:14px;
+}
+.cutbox{
+  position:relative; overflow:hidden; width:100%; max-width:300px;
+  background:#fff; line-height:0; touch-action:none; cursor:grab;
+  box-shadow:0 1px 4px rgba(24,28,26,.12);
+}
+.cutbox:active{cursor:grabbing}
+.cutbox img{display:block; width:100%; height:auto; -webkit-user-drag:none; user-select:none; pointer-events:none}
+/* 枠のまん中が分かるよう、三分割の線をうっすら引く */
+.cutbox::after{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:
+    linear-gradient(to right, transparent 33.33%, rgba(255,255,255,.45) 33.33%, rgba(255,255,255,.45) 33.5%, transparent 33.5%,
+      transparent 66.66%, rgba(255,255,255,.45) 66.66%, rgba(255,255,255,.45) 66.83%, transparent 66.83%),
+    linear-gradient(to bottom, transparent 33.33%, rgba(255,255,255,.45) 33.33%, rgba(255,255,255,.45) 33.5%, transparent 33.5%,
+      transparent 66.66%, rgba(255,255,255,.45) 66.66%, rgba(255,255,255,.45) 66.83%, transparent 66.83%);
+}

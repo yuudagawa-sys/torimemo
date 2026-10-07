@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "71";
+  var APPVER = "72";
 
   /* ============================================================
      小道具
@@ -2170,9 +2170,11 @@
             var it = anyItem(c.itemId);
             var src = it ? urlCache[it.thumbId || it.blobId] : "";
             if (!src) return;
-            mini += '<img class="bdbit" src="' + src + '" alt="" loading="lazy"'
+            mini += '<span class="bdbit' + (cutOf(c) ? " cut" : "") + '"'
               + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
-              + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">';
+              + cardFrame(it, c)
+              + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
+              + cardInner(it, src, c) + "</span>";
           });
           /* 貼ってあるのに1枚も描けないときは、写真がまだ届いていない。
              真っ白な紙だけ出して黙っていると、壊れたように見える */
@@ -6473,6 +6475,77 @@
      位置も大きさも「紙に対する割合」で持つので、
      あとから紙の大きさや向きを変えても、貼った並びは崩れない。
      ============================================================ */
+  /* ============================================================
+     切り方（ボードに貼った1枚だけの見せ方）
+     ------------------------------------------------------------
+     元の写真には指一本触れない。「どこを、どれだけ寄って見せるか」
+     という記録をカードの側に持つだけ。だから同じ写真を、
+     ボードAでは正方形、ボードBでは元のまま、ということができる。
+     やめればいつでも元の形に戻る。
+
+       r … 枠の縦横比（幅÷高さ）。0 なら写真そのままの形
+       s … 寄り。1 が「枠にちょうど収まる」。大きいほど寄る
+       x … 枠のまん中から、左右にどれだけずらすか（枠の幅に対する割合）
+       y … 同じく上下
+     ============================================================ */
+  function cutOf(c) {
+    var t = c && c.cut;
+    if (!t) return null;
+    var z = Number(t.s) || 1;
+    var r = Number(t.r) || 0;
+    var x = Number(t.x) || 0, y = Number(t.y) || 0;
+    /* 何も変えていないのと同じなら、切っていないことにする */
+    if (!r && z <= 1.001 && !x && !y) return null;
+    return { r: r, s: Math.max(1, z), x: x, y: y };
+  }
+  /* 写真そのものの縦横比 */
+  function photoRatio(it) {
+    return (it && it.w && it.h) ? (it.w / it.h) : 1;
+  }
+  /* 枠の縦横比。切っていなければ写真のまま */
+  function cardRatio(it, c) {
+    var t = cutOf(c);
+    return (t && t.r) ? t.r : photoRatio(it);
+  }
+  /* 枠を埋める大きさ。寄りのぶんまで込みで、枠に対する％で返す */
+  function cutFill(it, t) {
+    var sr = photoRatio(it), r = t.r || sr, iw, ih;
+    if (sr >= r) { ih = 100; iw = (sr / r) * 100; }
+    else { iw = 100; ih = (r / sr) * 100; }
+    return { w: iw * t.s, h: ih * t.s, r: r };
+  }
+  /* 枠の中で、写真をどの大きさ・どの位置に置くか。すべて枠に対する％ */
+  function cutPlace(it, c) {
+    var t = cutOf(c);
+    if (!t) return null;
+    var f = cutFill(it, t);
+    return { w: f.w, h: f.h, left: 50 + t.x * 100 - f.w / 2, top: 50 + t.y * 100 - f.h / 2, r: f.r };
+  }
+  /* 枠に隙間ができるところまでは、ずらさせない */
+  function cutClamp(it, c) {
+    var t = cutOf(c);
+    if (!t || !c.cut) return;
+    var f = cutFill(it, t);
+    var mx = Math.max(0, (f.w - 100) / 2) / 100;
+    var my = Math.max(0, (f.h - 100) / 2) / 100;
+    c.cut.x = Math.max(-mx, Math.min(mx, Number(c.cut.x) || 0));
+    c.cut.y = Math.max(-my, Math.min(my, Number(c.cut.y) || 0));
+  }
+  function r3(v) { return Math.round(v * 1000) / 1000; }
+  /* カードの中身。切っていれば、枠からはみ出したぶんは見えない */
+  function cardInner(it, src, c) {
+    if (!src) return '<span class="cardgone">写真がありません</span>';
+    var p = cutPlace(it, c);
+    if (!p) return '<img src="' + src + '" alt="" draggable="false">';
+    return '<img src="' + src + '" alt="" draggable="false" style="position:absolute;max-width:none;'
+      + "width:" + r3(p.w) + "%;height:" + r3(p.h) + "%;left:" + r3(p.left) + "%;top:" + r3(p.top) + '%">';
+  }
+  /* 枠そのものの指定。切っているときだけ、形を決め打ちする */
+  function cardFrame(it, c) {
+    if (!cutOf(c)) return "";
+    return "aspect-ratio:" + r3(cardRatio(it, c)) + ";";
+  }
+
   var PAPER = {
     a4: { w: 210, h: 297, name: "A4" },
     a3: { w: 297, h: 420, name: "A3" },
@@ -6715,10 +6788,12 @@
         (pg.cards || []).forEach(function (c, i) {
           var it = anyItem(c.itemId);
           var src = it ? urlCache[it.blobId || it.thumbId] : "";
-          out += '<div class="card' + (c.id === boardSel ? " sel" : "") + '" data-card="' + esc(c.id) + '"'
+          out += '<div class="card' + (c.id === boardSel ? " sel" : "")
+            + (cutOf(c) ? " cut" : "") + '" data-card="' + esc(c.id) + '"'
             + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
+            + cardFrame(it, c)
             + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
-            + (src ? '<img src="' + src + '" alt="" draggable="false">' : '<span class="cardgone">写真がありません</span>')
+            + cardInner(it, src, c)
             + "</div>";
         });
         out += "</div></div>";
@@ -6853,11 +6928,14 @@
     if (!bar) return;
     var hit = selOf(b), c = hit && hit.card;
     bar.innerHTML = c
-      ? '<button data-bd="back">うしろへ</button>'
-        + '<button data-bd="front">まえへ</button>'
-        /* 回すのは記号にする。文字にすると帯に収まらず、端が切れる */
+      /* 帯は横に1列しかない。字数を増やすとすぐ端が切れるので、
+         言葉は短く、回すところは記号にしてある */
+      ? '<button data-bd="back">後ろへ</button>'
+        + '<button data-bd="front">前へ</button>'
         + '<button data-bd="left" class="turn" aria-label="左へ回す" title="左へ回す">↺</button>'
         + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
+        + '<button data-bd="cut" aria-label="切り取り" title="切り取り"'
+        + (cutOf(c) ? ' class="on"' : "") + ">切る</button>"
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
@@ -6869,12 +6947,133 @@
     var hit = selOf(b);
     if (!hit) return;
     var page = hit.page, i = hit.i, c = hit.card;
+    if (k === "cut") { cutSheet(b, c); return; }
     if (k === "off") { page.cards.splice(i, 1); boardSel = ""; }
     else if (k === "front") { page.cards.splice(i, 1); page.cards.push(c); }
     else if (k === "back") { page.cards.splice(i, 1); page.cards.unshift(c); }
     else if (k === "left") { c.rot = Math.round(((c.rot || 0) - 5) * 10) / 10; }
     else if (k === "right") { c.rot = Math.round(((c.rot || 0) + 5) * 10) / 10; }
     saveBoard(b, function () { paint(); });
+  }
+
+  /* ============================================================
+     切り取りの画面
+     ------------------------------------------------------------
+     枠の形を選び、中の写真を指で動かし、つまんで寄せる。
+     元の写真は作り直さないので、「やめる」でいつでも元の形に戻る。
+     ============================================================ */
+  function cutSheet(b, c) {
+    var it = anyItem(c.itemId);
+    if (!it) { toast("この写真が見つかりませんでした。", true); return; }
+    /* 触っている間は控えのほうを直し、決めたときに本体へ移す */
+    var was = c.cut ? JSON.parse(JSON.stringify(c.cut)) : null;
+    if (!c.cut) c.cut = { r: 0, s: 1, x: 0, y: 0 };
+
+    ensureUrls([it.blobId || it.thumbId]).then(function () {
+      var src = urlCache[it.blobId || it.thumbId] || "";
+
+      sheet('<div class="panel-head"><h3>切り取り</h3>'
+        + '<div style="display:flex;gap:8px">'
+        + '<button class="iconbtn" id="ctNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button>'
+        + '<button class="iconbtn ok" id="ctOk" aria-label="決める"><svg><use href="#i-check"/></svg></button>'
+        + "</div></div>"
+        + '<div class="panel-body"><div class="stack">'
+        + '<div class="cutwrap"><div class="cutbox" id="ctBox"></div></div>'
+        + '<div class="label">枠の形</div>'
+        + '<div class="segrow" id="ctCuts"></div>'
+        + '<div class="field"><label class="label" for="ctZoom">寄り</label>'
+        + '<input type="range" id="ctZoom" min="100" max="300" step="1" style="width:100%">'
+        + '<div class="hintline">枠の中を指で動かせます。つまんでも寄せられます</div></div>'
+        + '<button class="ghost" id="ctOff" style="width:100%">切り取りをやめて、元の形に戻す</button>'
+        + '<div class="hintline">元の写真は切りません。ここで決めるのは'
+        + "<b>このボードでの見せ方</b>だけです。同じ写真を別のボードで違う形にできます。</div>"
+        + "</div></div>", "dialog");
+
+      function draw() {
+        cutClamp(it, c);
+        var box = $("ctBox");
+        if (!box) return;
+        box.style.aspectRatio = r3(cardRatio(it, c));
+        box.innerHTML = cardInner(it, src, c)
+          || '<img src="' + src + '" alt="">';
+        var z = $("ctZoom");
+        if (z) z.value = String(Math.round((Number(c.cut.s) || 1) * 100));
+        Array.prototype.forEach.call(document.querySelectorAll("[data-cut]"), function (bt) {
+          bt.setAttribute("aria-pressed", String(Number(bt.getAttribute("data-cut")) === Number(c.cut.r || 0)));
+        });
+      }
+
+      $("ctCuts").innerHTML = CUTS.map(function (x) {
+        return '<button class="seg" data-cut="' + x.r + '">' + esc(x.t) + "</button>";
+      }).join("");
+      Array.prototype.forEach.call(document.querySelectorAll("[data-cut]"), function (bt) {
+        bt.onclick = function () {
+          c.cut.r = Number(bt.getAttribute("data-cut")) || 0;
+          draw();
+        };
+      });
+
+      $("ctZoom").oninput = function () {
+        c.cut.s = Math.max(1, Number(this.value) / 100);
+        draw();
+      };
+
+      /* 枠の中を指でなぞって動かす。2本ならつまんで寄せる */
+      var box = $("ctBox");
+      var pts = {}, nPts = 0, from = null, pinch = null;
+      box.addEventListener("pointerdown", function (e) {
+        box.setPointerCapture(e.pointerId);
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        nPts++;
+        var r = box.getBoundingClientRect();
+        if (nPts === 1) from = { x: e.clientX, y: e.clientY, cx: c.cut.x || 0, cy: c.cut.y || 0, w: r.width, h: r.height };
+        if (nPts === 2) {
+          var k = Object.keys(pts);
+          var a = pts[k[0]], d = pts[k[1]];
+          pinch = { d: Math.hypot(a.x - d.x, a.y - d.y) || 1, s: Number(c.cut.s) || 1 };
+        }
+        e.preventDefault();
+      });
+      box.addEventListener("pointermove", function (e) {
+        if (!pts[e.pointerId]) return;
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        if (nPts >= 2 && pinch) {
+          var k = Object.keys(pts);
+          var a = pts[k[0]], d = pts[k[1]];
+          var now = Math.hypot(a.x - d.x, a.y - d.y) || 1;
+          c.cut.s = Math.max(1, Math.min(3, pinch.s * (now / pinch.d)));
+          draw();
+          return;
+        }
+        if (!from) return;
+        c.cut.x = from.cx + (e.clientX - from.x) / from.w;
+        c.cut.y = from.cy + (e.clientY - from.y) / from.h;
+        draw();
+      });
+      ["pointerup", "pointercancel"].forEach(function (k) {
+        box.addEventListener(k, function (e) {
+          if (pts[e.pointerId]) { delete pts[e.pointerId]; nPts = Math.max(0, nPts - 1); }
+          if (nPts < 2) pinch = null;
+          if (!nPts) from = null;
+        });
+      });
+
+      $("ctOff").onclick = function () {
+        delete c.cut;
+        saveBoard(b, function () { closeSheet(); paint(); toast("元の形に戻しました"); });
+      };
+      $("ctNo").onclick = function () {
+        if (was) c.cut = was; else delete c.cut;
+        closeSheet(); paint();
+      };
+      $("ctOk").onclick = function () {
+        /* 何も変えていないなら、記録そのものを残さない */
+        if (!cutOf(c)) delete c.cut;
+        saveBoard(b, function () { closeSheet(); paint(); });
+      };
+
+      draw();
+    }).catch(function (e) { toast(why(e), true); });
   }
 
   /* 指で動かす・つまんで大きさと傾きを変える */
@@ -6991,13 +7190,29 @@
           if (!src) { next(); return; }
           var im = new Image();
           im.onload = function () {
+            var nw = im.naturalWidth || it.w || 1, nh = im.naturalHeight || it.h || 1;
             var w = c.w * W;
-            var h = im.naturalHeight && im.naturalWidth
-              ? w * (im.naturalHeight / im.naturalWidth) : w;
+            var t = cutOf(c);
             g.save();
             g.translate(c.x * W, c.y * H);
             g.rotate((c.rot || 0) * Math.PI / 180);
-            g.drawImage(im, -w / 2, -h / 2, w, h);
+            if (!t) {
+              var h = w * (nh / nw);
+              g.drawImage(im, -w / 2, -h / 2, w, h);
+            } else {
+              /* 画面と同じ置きかたを、そのまま紙の大きさで。
+                 枠からはみ出したぶんは切り落とす */
+              var fr = t.r || (nw / nh);
+              var fh = w / fr;
+              var sr = nw / nh, iw, ih;
+              if (sr >= fr) { ih = fh; iw = fh * sr; }
+              else { iw = w; ih = w / sr; }
+              iw *= t.s; ih *= t.s;
+              g.beginPath();
+              g.rect(-w / 2, -fh / 2, w, fh);
+              g.clip();
+              g.drawImage(im, t.x * w - iw / 2, t.y * fh - ih / 2, iw, ih);
+            }
             g.restore();
             next();
           };
