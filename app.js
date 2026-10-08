@@ -1,4 +1,4 @@
-/* Rawpo（ローポ）— ホーム画面アプリ版
+/* フォルポ（Folpo）— ホーム画面アプリ版
  *
  * 写真・録音・録画・メモはすべて端末の中（IndexedDB）に入ります。
  * サーバーには何も送りません。通信が無くても動きます。
@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "75";
+  var APPVER = "76";
 
   /* ============================================================
      小道具
@@ -428,7 +428,7 @@
        Shelf.invite()    招くためのリンクを作る
      ============================================================ */
 
-  /* Googleに登録したRawpoの名札。公開されている前提の値なので、
+  /* Googleに登録したフォルポの名札。公開されている前提の値なので、
      ここに書いてあって問題ない。対になる「シークレット」は使わない */
   var G_ID = "1016605740338-ilj0tn76ll6q23gepb7aer4ndi4h4d2i.apps.googleusercontent.com";
 
@@ -464,8 +464,24 @@
      押したのに12秒待たされる、ということがないように */
   var gQuietDead = 0;
 
+  /* いま頼んでいる最中の合鍵。待ち合わせに使う */
+  var gWait = { quiet: null, ask: null };
+
   function gKey(quiet) {
     if (gTok && Date.now() < gTokUntil) return Promise.resolve(gTok);
+    /* 同じ合鍵を二人で取りにいかせない。Googleの窓口は1つしかなく、
+       重ねて頼むと、先に頼んだほうの返事が迷子になって戻ってこない。
+       2本同時に問い合わせたときに「接続しています…」で固まるのは、これが原因 */
+    var slot = quiet ? "quiet" : "ask";
+    if (gWait[slot]) return gWait[slot];
+    var p = gKeyNow(quiet);
+    gWait[slot] = p;
+    function clear() { if (gWait[slot] === p) gWait[slot] = null; }
+    p.then(clear, clear);
+    return p;
+  }
+
+  function gKeyNow(quiet) {
     return gScript().then(function () {
       return new Promise(function (ok, ng) {
         var done = false, timer = null;
@@ -551,6 +567,12 @@
     });
   }
 
+  /* ドライブに置くものの名前。画面には「フォルポ」と出すが、
+     フォルダ名とファイル名は英字にしておく。ほかのアプリやパソコンからも
+     見えるところなので、英字のほうが扱いが素直 */
+  var ROOT_NAME = "Folpo";
+  var OLD_ROOT = "Rawpo";   /* 前の名前。すでに使っている人のために残す */
+
   var DRIVE = "https://www.googleapis.com/drive/v3/files";
   var DRIVE_UP = "https://www.googleapis.com/upload/drive/v3/files";
 
@@ -607,37 +629,67 @@
       }).then(function (r) { return r.id; });
     },
 
-    /* 名前が「Rawpo」のフォルダを、古い順に全部。
+    /* 名前が「フォルポ」のフォルダを、古い順に全部。
        二台が別々に初めて使うと、それぞれが自分のフォルダを作ってしまう。
        そうなると片方の記録がもう片方から一生見えないので、
        どの端末も「いちばん古いもの」に寄せる決まりにしてある */
     roots: function () {
-      var q = encodeURIComponent(
-        "mimeType='application/vnd.google-apps.folder' and name='Rawpo' and trashed=false");
-      var f = encodeURIComponent("files(id,createdTime)");
-      return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&orderBy=createdTime&pageSize=100")
-        .then(function (r) { return r.files || []; });
+      /* 前の名前（Rawpo）で作ったフォルダも拾う。拾わないと、
+         名前を変えた日に同期先を見失って、まっさらから始まってしまう。
+         名前ごとに1回ずつ引く。1本のまとめ書きにすると、
+         問い合わせの書き方しだいで取りこぼすことがある */
+      function byName(nm) {
+        var q = encodeURIComponent(
+          "mimeType='application/vnd.google-apps.folder' and name='" + nm + "' and trashed=false");
+        var f = encodeURIComponent("files(id,name,createdTime)");
+        return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&orderBy=createdTime&pageSize=100")
+          .then(function (r) { return r.files || []; }, function () { return []; });
+      }
+      return Promise.all([byName(ROOT_NAME), byName(OLD_ROOT)]).then(function (two) {
+        var all = two[0].concat(two[1]);
+        /* 古い順に並べ直す。どの端末も「いちばん古いもの」に寄せる */
+        all.sort(function (a, b) {
+          return String(a.createdTime || "").localeCompare(String(b.createdTime || ""));
+        });
+        return all;
+      });
     },
 
-    /* Rawpo の置き場所。無ければ作る。
+    /* 古い名前のフォルダを、新しい名前に改めてもらう。
+       中身はそのまま。番号が変わらないので、同期も続く */
+    rename: function (fileId, name) {
+      return gCall(DRIVE + "/" + fileId + "?fields=id,name", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name })
+      });
+    },
+
+    /* フォルポ の置き場所。無ければ作る。
        番号は控えるが、控えを頼りにはしない。毎回いちばん古いものを見にいく。
        控えだけで動かしていたせいで、二つのフォルダに分かれたまま
        どちらの端末も気づけない、ということが起きていた */
     root: function () {
       var had = recall("driveRoot");
       function born() {
-        return Shelf.newRoom("Rawpo").then(function (id) {
+        return Shelf.newRoom(ROOT_NAME).then(function (id) {
           remember("driveRoot", id);
           return id;
         });
       }
       return Shelf.roots().then(function (files) {
         if (files.length) {
-          var id = files[0].id;
+          var top = files[0], id = top.id;
           /* 前と違うフォルダに移るときは、送った控えを忘れる。
              前の置き場に送った記録は、新しい置き場には無い */
           if (had && had !== id) placeChanged();
           remember("driveRoot", id);
+          /* 古い名前のままなら、ここで改める。番号は変わらないので
+             中身も同期も、そのまま続く。しくじっても使い続けられる */
+          if (top.name === OLD_ROOT) {
+            return Shelf.rename(id, ROOT_NAME).then(function () { return id; },
+                                                    function () { return id; });
+          }
           return id;
         }
         if (!had) return born();
@@ -1522,7 +1574,7 @@
     } else {
       el.className = "banner";
       el.style.background = col || "";
-      el.innerHTML = '<span class="bmark">Rawpo</span>';
+      el.innerHTML = '<span class="bmark">フォルポ</span>';
     }
   }
 
@@ -1711,7 +1763,7 @@
     if (screen === "shelf") {
       document.documentElement.setAttribute("data-screen", "shelf");
       pick.className = "exbtn still";
-      pick.setAttribute("aria-label", "Rawpo");
+      pick.setAttribute("aria-label", "フォルポ");
       t.textContent = "";
       if (cb) cb.innerHTML = "";
       if (exs.length) {
@@ -5060,13 +5112,13 @@
             + '<svg><use href="#i-share"/></svg></button>'
           : "")
       + '<button class="rowbtn" id="xZip"><div><b>写真とメモ（ZIP）</b>'
-      + "<span>写真・動画・録音・書類をまとめて、メモも同梱。相手がRawpoを使っていなくても開けます。</span></div>"
+      + "<span>写真・動画・録音・書類をまとめて、メモも同梱。相手がフォルポを使っていなくても開けます。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="xMd"><div><b>メモだけ（Markdown）</b>'
       + "<span>撮った順に並べた文章。原稿を書くときはこれ。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
-      + '<button class="rowbtn" id="xPack"><div><b>まるごと（Rawpoに読み込める形）</b>'
-      + "<span>別の端末のRawpoで「バックアップから戻す」を使うと、このフォルダがそのまま入ります。</span></div>"
+      + '<button class="rowbtn" id="xPack"><div><b>まるごと（フォルポに読み込める形）</b>'
+      + "<span>別の端末のフォルポで「バックアップから戻す」を使うと、このフォルダがそのまま入ります。</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + "</div>"
       + '<div class="hintline" style="margin-top:10px">どれを選んでも、最後に端末の共有シートが開きます。'
@@ -5195,7 +5247,14 @@
     if (/Windows/.test(u)) return "Windows";
     return "この端末";
   }
-  function bundleName(dev) { return "Rawpo_まるごと_" + safeName(dev || deviceName()) + ".zip"; }
+  function bundleName(dev) { return ROOT_NAME + "_まるごと_" + safeName(dev || deviceName()) + ".zip"; }
+  /* 前の名前で作ったセーブデータも、一覧に出し続ける。
+     出さないと、名前を変えた日に今までの保存が消えたように見える */
+  var BUNDLE_RE = new RegExp("^(" + ROOT_NAME + "|" + OLD_ROOT + ")_まるごと_.*\\.zip$");
+  function bundleWho(name) {
+    return String(name).replace(new RegExp("^(" + ROOT_NAME + "|" + OLD_ROOT + ")_まるごと_"), "")
+      .replace(/\.zip$/, "");
+  }
 
   /* ドライブにアップロードする。端末ごとに1つだけ置き、押すたびに入れ替える */
   function pushAll(after) {
@@ -5222,8 +5281,8 @@
      まるごとZIPは「セーブデータ」として残し、こちらを普段づかいにする。
      ドライブの中はこうなる。
 
-       Rawpo/
-         Rawpo_まるごと_端末名.zip   ← 手で作るセーブデータ
+       フォルポ/
+         Folpo_まるごと_端末名.zip   ← 手で作るセーブデータ
          同期/
            端末の札.json             ← その端末が知っていること（記録だけ）
            中身/
@@ -5778,7 +5837,7 @@
   function listBundles() {
     return Shelf.root().then(function (id) {
       return Shelf.list(id).then(function (rows) {
-        return rows.filter(function (r) { return /^Rawpo_まるごと_.*\.zip$/.test(r.name); })
+        return rows.filter(function (r) { return BUNDLE_RE.test(r.name); })
           .sort(function (a, b) { return b.at - a.at; });
       });
     });
@@ -5862,7 +5921,7 @@
         + '<button class="iconbtn" id="tmClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
         + '<div class="panel-body"><div class="stack">'
         + '<div class="hintline">使う端末それぞれで<b>同じGoogleアカウントにログイン</b>すると、中身がそろいます。'
-        + "置き場所は<b>あなた自身のGoogleドライブ</b>です。写真がRawpoのサーバーを通ることはありません。</div>"
+        + "置き場所は<b>あなた自身のGoogleドライブ</b>です。写真がフォルポのサーバーを通ることはありません。</div>"
         + body
         + '<div class="saveflag" id="tmSay"></div>'
         + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
@@ -5959,8 +6018,8 @@
         askYesNo({
           title: "まるごと保存",
           body: "いまのフォルダ・写真・メモをひとつにまとめて、"
-            + "あなた自身のGoogleドライブの「Rawpo」フォルダに置きます。"
-            + "名前は Rawpo_まるごと_" + deviceName() + ".zip です。"
+            + "あなた自身のGoogleドライブの「フォルポ」フォルダに置きます。"
+            + "名前は Folpo_まるごと_" + deviceName() + ".zip です。"
             + (size ? "だいたい " + mb(size) + " を送ります。" : "")
             + "前の保存と入れ替わるので、ドライブの中が増えていくことはありません。",
           ok: "保存する",
@@ -5981,7 +6040,7 @@
           }
           box.innerHTML = '<div class="label" style="margin-top:6px">ドライブにある保存</div>'
             + rows.map(function (r, i) {
-              var who = r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "");
+              var who = bundleWho(r.name);
               return '<button class="rowbtn" data-pull="' + i + '"><div><b>' + esc(who) + "</b>"
                 + "<span>" + whenTxt(r.at) + " ・ " + mb(r.size) + "</span></div>"
                 + '<svg><use href="#i-out"/></svg></button>';
@@ -5990,7 +6049,7 @@
             b.onclick = function () {
               var r = rows[Number(b.getAttribute("data-pull"))];
               askYesNo({
-                title: "「" + r.name.replace(/^Rawpo_まるごと_/, "").replace(/\.zip$/, "") + "」から戻す",
+                title: "「" + bundleWho(r.name) + "」から戻す",
                 body: "いまこの端末にあるものは消えません。足りないものだけが足されます。"
                   + "同じものが両方にあるときは、ドライブにあるほうで上書きされます。",
                 ok: "戻す"
@@ -6011,7 +6070,7 @@
           $("tmProbeOut").innerHTML = '<div class="qabody" style="margin-top:6px">'
             + "<p>この端末の札：<b>" + esc(devId()) + "</b>（" + esc(deviceName()) + "）</p>"
             + "<p>アカウント：<b>" + esc(Shelf.who() || "不明") + "</b></p>"
-            + "<p>「Rawpo」フォルダの数：<b>" + r.roots + "</b>"
+            + "<p>「フォルポ」フォルダの数：<b>" + r.roots + "</b>"
             + (r.roots > 1 ? "　← 二つ以上あります。いちばん古いほうを使います" : "")
             + "</p>"
             + "<p>使っているフォルダ：<b>" + esc(String(r.root).slice(0, 8)) + "…</b></p>"
@@ -6043,7 +6102,7 @@
       if (t) t.onclick = function () {
         say("試しています…");
         var made = null;
-        Shelf.newRoom("Rawpo_接続の確認").then(function (id) {
+        Shelf.newRoom("フォルポ_接続の確認").then(function (id) {
           made = id;
           return Shelf.put(id, "test.txt", new Blob(["ok"], { type: "text/plain" }));
         }).then(function () {
@@ -6091,7 +6150,7 @@
       + '<button class="iconbtn" id="hpClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
 
-      + '<div class="hintline">Rawpoは、ひとつの出来事ごとにフォルダを作って、'
+      + '<div class="hintline">フォルポは、ひとつの出来事ごとにフォルダを作って、'
       + "その場で撮ったもの・書いたものを放り込んでいくアプリです。</div>"
 
       + qa("はじめかた",
@@ -6114,7 +6173,7 @@
 
       + qa("iPhoneとパソコンで同じ中身にする",
           "<p>使う端末それぞれで、画面の<b>下の右端にある丸</b>から同じGoogleアカウントにログインします。"
-          + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、Rawpoのサーバーは通りません。</p>"
+          + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、フォルポのサーバーは通りません。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
           + "手で合わせたいときは「いますぐ同期」を押します。</p>"
           + "<p>写真は<b>一度送れば二度は送りません</b>。2回目からは記録だけなので、通信はごくわずかです。</p>"
@@ -6125,13 +6184,13 @@
           "<p><b>まるごと保存</b>は、いまの中身をひとまとめにしてドライブに置きます。"
           + "押すたびに前の保存と入れ替わるので、ドライブの中が増えていくことはありません。</p>"
           + "<p><b>保存から戻す</b>で、そこまで戻せます。いまの中身は消えず、足りないものだけが足されます。</p>"
-          + "<p>ドライブに置いたファイルは<b>Rawpoがまとめた形</b>です。"
+          + "<p>ドライブに置いたファイルは<b>フォルポがまとめた形</b>です。"
           + "ドライブのアプリで開こうとすると「サポートされていないファイル形式です」と出ますが、"
-          + "壊れているわけではありません。中身を見るときは、Rawpoの「保存から戻す」を使ってください。</p>")
+          + "壊れているわけではありません。中身を見るときは、フォルポの「保存から戻す」を使ってください。</p>")
 
       + qa("機種変更・バックアップ",
           "<p>設定の<b>まるごとバックアップ</b>で、すべてをZIPにして書き出せます。"
-          + "新しい端末でRawpoを開き、<b>バックアップ／共有されたZIPを読み込む</b>から読ませてください。</p>"
+          + "新しい端末でフォルポを開き、<b>バックアップ／共有されたZIPを読み込む</b>から読ませてください。</p>"
           + "<p>フォルダ1つだけを人に渡したいときは、そのフォルダを開いて"
           + "設定 → <b>このフォルダを共有する</b>。相手も同じ読み込み口から開けます。</p>")
 
@@ -6148,7 +6207,7 @@
           + "「使っているフォルダ」が同じなら、あとは同期を押すだけでそろいます。"
           + "違っていても、もう一度同期すれば、古いほうのフォルダに自動でそろいます。</p>"
           + "<p><b>写真のところが空のまま</b><br>相手の端末が、まだ写真を送り終わっていません。"
-          + "相手の端末でRawpoを開いたままにしておくと送り終わり、次の同期で届きます。</p>"
+          + "相手の端末でフォルポを開いたままにしておくと送り終わり、次の同期で届きます。</p>"
           + "<p><b>一緒に使う人がログインできない</b><br>いまはお試しの段階で、"
           + "Google側に登録した人しか使えません。その人のGmailを登録する必要があります。</p>"
           + "<p><b>容量が気になる</b><br>設定の<b>端末の使用量</b>で見られます。"
@@ -6156,13 +6215,13 @@
 
       + qa("データはどこにあるか",
           "<p>写真・録音・動画・メモは、すべて<b>この端末の中</b>にあります。"
-          + "Rawpoのサーバーに送られることはありません。</p>"
+          + "フォルポのサーバーに送られることはありません。</p>"
           + "<p>同期をつないだときだけ、<b>あなた自身のGoogleドライブ</b>を通ります。"
-          + "Rawpoが触れるのは、Rawpoが作ったファイルだけです。"
+          + "フォルポが触れるのは、フォルポが作ったファイルだけです。"
           + "ドライブのほかのファイルは見えません。</p>")
 
       + "</div></div>"
-      + '<div class="panel-foot"><span class="label">Rawpo v' + esc(APPVER) + "</span></div>", "dialog");
+      + '<div class="panel-foot"><span class="label">フォルポ v' + esc(APPVER) + "</span></div>", "dialog");
 
     $("hpClose").onclick = closeSheet;
   }
@@ -6292,7 +6351,7 @@
 
   function backup() {
     makeBackup(null, null).then(function (zip) {
-      return handOver(zip, "Rawpo_バックアップ_" + today() + ".zip").then(function (how) {
+      return handOver(zip, "フォルポ_バックアップ_" + today() + ".zip").then(function (how) {
         progress(100);
         if (how !== "cancel") toast("バックアップを書き出しました（" + mb(zip.size) + "）");
       });

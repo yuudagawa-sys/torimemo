@@ -1,10 +1,10 @@
-/* Rawpo — オフライン用のサービスワーカー
+/* フォルポ — オフライン用のサービスワーカー
  *
  * アプリの本体（HTML/CSS/JS/アイコン）を端末に貯めておき、
  * 電波がなくても起動できるようにする。
  * 写真やメモは IndexedDB 側にあるので、ここでは扱わない。
  */
-var CACHE = "expo-note-v75";
+var CACHE = "expo-note-v76";
 var SHELL = [
   "./",
   "./index.html",
