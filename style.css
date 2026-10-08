@@ -516,13 +516,18 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .bdsub{display:block; margin-top:2px; font-size:11px; color:var(--ink3)}
 
 /* 貼る台。紙はいつも画面の幅いっぱいに収める */
-.boardwrap{padding:4px 0 14px}
+/* 紙は入れものの幅いっぱい。大きくしたぶんは横に送って見る */
+.boardwrap{padding:4px 0 14px; overflow-x:auto; scrollbar-width:thin}
 .paper{
-  position:relative; width:100%; margin:0 auto;
+  position:relative; width:calc(100% * var(--bz, 1)); margin:0 auto;
   background:#fff; border:1px solid var(--line2);
   box-shadow:0 2px 10px rgba(24,28,26,.10);
   overflow:hidden; touch-action:none;
 }
+/* 運んでいるあいだは、紙の外へ出ても見えるようにする。
+   そうしないと、別のページへ持っていく途中で消えてしまう */
+.paper.dragging{overflow:visible; z-index:3}
+.paper.dragging .card{will-change:left, top}
 .card{position:absolute; line-height:0}
 .card img{display:block; width:100%; height:auto; -webkit-user-drag:none; user-select:none; pointer-events:none}
 .card.sel{outline:2px solid var(--mark); outline-offset:2px}
@@ -2031,4 +2036,30 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 .txdot{
   display:inline-block; width:10px; height:10px; border-radius:999px;
   border:1px solid rgba(0,0,0,.18); margin-right:6px; vertical-align:-1px;
+}
+
+
+/* ================= 自由な紙の大きさ ================= */
+.mmrow{display:flex; align-items:center; gap:10px}
+.mmrow .inp{flex:1 1 0; min-width:0; text-align:center}
+.mmx{flex:0 0 auto; color:var(--ink3); font-size:13px}
+
+/* ================= 戻す・進める ================= */
+.boardtools button:disabled{opacity:.35}
+.boardtools button.turn{font-size:15px; line-height:1; padding:5px 10px}
+
+/* ================= 横に寝かせたとき =================
+   紙を少しでも高く見せたいので、下まわりを薄くする */
+@media (orientation:landscape) and (max-height:560px){
+  :root[data-screen="board"] .dock{
+    padding:4px var(--pad) calc(4px + env(safe-area-inset-bottom));
+  }
+  :root[data-screen="board"] .tabbar button span{display:none}
+  :root[data-screen="board"] .tabbar .addtab{padding:6px 0}
+  :root[data-screen="board"] .boardfix{padding:2px var(--pad) 4px}
+  :root[data-screen="board"] .boardtools{padding:3px 0 1px}
+  :root[data-screen="board"] .boardbar{height:38px}
+  :root[data-screen="board"] .pagehead{padding:8px 0 4px}
+  /* 横のときは、紙が画面の高さに収まるところまでを目安にする */
+  :root[data-screen="board"] .paper{max-width:none}
 }

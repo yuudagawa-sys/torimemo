@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "74";
+  var APPVER = "75";
 
   /* ============================================================
      小道具
@@ -6600,26 +6600,39 @@
   }
 
   var PAPER = {
-    a4: { w: 210, h: 297, name: "A4" },
-    a3: { w: 297, h: 420, name: "A3" },
-    a2: { w: 420, h: 594, name: "A2" }
+    a4:   { w: 210, h: 297, name: "A4" },
+    a3:   { w: 297, h: 420, name: "A3" },
+    a2:   { w: 420, h: 594, name: "A2" },
+    /* 決まった判型に当てはまらないとき。幅と高さをミリで持つ */
+    free: { w: 210, h: 210, name: "自由" }
   };
   var LAY = [
     { k: "p",  name: "縦" },
     { k: "l",  name: "横" },
     { k: "sq", name: "正方形" }
   ];
-  /* 紙の実寸（mm）。向きで入れ替える。正方形は短いほうに合わせる */
+  var FREE_MIN = 20, FREE_MAX = 2000;
+  function freeMm(v, def) {
+    var n = Math.round(Number(v) || 0);
+    if (!n) return def;
+    return Math.max(FREE_MIN, Math.min(FREE_MAX, n));
+  }
+  /* 紙の実寸（mm）。向きで入れ替える。正方形は短いほうに合わせる。
+     「自由」は入れた寸法をそのまま使うので、向きの入れ替えはしない */
   function paperSize(b) {
+    if (b && b.paper === "free") {
+      return { w: freeMm(b.pw, 210), h: freeMm(b.ph, 210) };
+    }
     var p = PAPER[(b && b.paper) || "a4"] || PAPER.a4;
     if (b && b.lay === "l") return { w: p.h, h: p.w };
     if (b && b.lay === "sq") return { w: p.w, h: p.w };
     return { w: p.w, h: p.h };
   }
   function paperName(b) {
+    var s = paperSize(b);
+    if (b && b.paper === "free") return "自由（" + s.w + "×" + s.h + "mm）";
     var p = PAPER[(b && b.paper) || "a4"] || PAPER.a4;
     var l = LAY.filter(function (x) { return x.k === ((b && b.lay) || "p"); })[0];
-    var s = paperSize(b);
     return p.name + "・" + (l ? l.name : "縦") + "（" + s.w + "×" + s.h + "mm）";
   }
 
@@ -6717,8 +6730,59 @@
     for (var i = 0; i < boards.length; i++) if (boards[i].id === id) return boards[i];
     return null;
   }
+  /* ============================================================
+     戻す・進める
+     ------------------------------------------------------------
+     ボードを開いているあいだだけ覚えておく。中身まるごとの控えを
+     積んでいく形にした。1枚の紙に乗るものはたかが知れているので、
+     何をどう変えたかを細かく記録するより、こちらのほうが確かで短い。
+     ============================================================ */
+  var undoPile = [], redoPile = [], undoBase = null, UNDO_MAX = 40;
+  function boardSnap(b) {
+    return JSON.stringify({ pages: pagesOf(b), paper: b.paper, lay: b.lay,
+                            pw: b.pw, ph: b.ph, grid: b.grid, snap: b.snap });
+  }
+  /* ボードを開いたとき、履歴を引き直す */
+  function undoStart(b) {
+    undoPile = []; redoPile = [];
+    undoBase = b ? boardSnap(b) : null;
+  }
+  function undoApply(b, snap) {
+    var o = JSON.parse(snap);
+    b.pages = o.pages;
+    b.paper = o.paper; b.lay = o.lay; b.pw = o.pw; b.ph = o.ph;
+    b.grid = o.grid; b.snap = o.snap;
+    delete b.cards;
+  }
+  function canUndo() { return undoPile.length > 0; }
+  function canRedo() { return redoPile.length > 0; }
+  function undoStep(b, back) {
+    var from = back ? undoPile : redoPile;
+    var to = back ? redoPile : undoPile;
+    if (!from.length) return;
+    to.push(boardSnap(b));
+    undoApply(b, from.pop());
+    undoBase = boardSnap(b);
+    boardSel = "";
+    /* 履歴をたどった結果も残す。閉じて開き直しても、そこが続きになる */
+    DB.put("boards", b).then(function () {
+      var i = -1;
+      for (var k = 0; k < boards.length; k++) if (boards[k].id === b.id) i = k;
+      if (i < 0) boards.push(b); else boards[i] = b;
+      paint();
+    }).catch(function (e) { toast(why(e), true); });
+  }
+
   function saveBoard(b, after) {
     pagesOf(b);
+    /* 変える前の姿を積む。同じ中身なら積まない（押しただけのとき） */
+    var now = boardSnap(b);
+    if (undoBase !== null && undoBase !== now) {
+      undoPile.push(undoBase);
+      if (undoPile.length > UNDO_MAX) undoPile.shift();
+      redoPile = [];
+    }
+    undoBase = now;
     DB.put("boards", b).then(function () {
       var i = -1;
       for (var k = 0; k < boards.length; k++) if (boards[k].id === b.id) i = k;
@@ -6748,7 +6812,8 @@
   function boardDialog(b) {
     var mk = !b;
     var e = b || { id: "", name: "", paper: "a4", lay: "p", cards: [] };
-    var pick = { paper: e.paper || "a4", lay: e.lay || "p" };
+    var pick = { paper: e.paper || "a4", lay: e.lay || "p",
+                 pw: freeMm(e.pw, 210), ph: freeMm(e.ph, 210) };
 
     function seg(name, list, cur, key) {
       return '<div class="field"><div class="label">' + esc(name) + "</div>"
@@ -6764,6 +6829,14 @@
       + '<div class="field"><label class="label" for="bdName">名前</label>'
       + '<input class="inp" id="bdName" value="' + esc(e.name) + '" placeholder="参考ボード"></div>'
       + seg("紙の大きさ", Object.keys(PAPER).map(function (k) { return { k: k, name: PAPER[k].name }; }), pick.paper, "paper")
+      /* 「自由」のときだけ出す。判型に当てはまらない誌面に合わせるため */
+      + '<div class="field" id="bdFree" hidden><div class="label">幅と高さ（mm）</div>'
+      + '<div class="mmrow">'
+      + '<input class="inp" id="bdW" type="number" inputmode="numeric" min="' + FREE_MIN + '" max="' + FREE_MAX + '" value="' + pick.pw + '">'
+      + '<span class="mmx">×</span>'
+      + '<input class="inp" id="bdH" type="number" inputmode="numeric" min="' + FREE_MIN + '" max="' + FREE_MAX + '" value="' + pick.ph + '">'
+      + "</div>"
+      + '<div class="hintline">' + FREE_MIN + "〜" + FREE_MAX + "mm。向きは、幅と高さの入れ方で決まります</div></div>"
       + seg("向き", LAY, pick.lay, "lay")
       + '<div class="hintline" id="bdSize"></div>'
       + '<button class="cta" id="bdOk" style="width:100%">' + (mk ? "つくる" : "直す") + "</button>"
@@ -6772,9 +6845,25 @@
 
     noAutofill($("panel"));
     function sizeLine() {
-      $("bdSize").textContent = "紙は " + paperName({ paper: pick.paper, lay: pick.lay })
+      var free = pick.paper === "free";
+      $("bdFree").hidden = !free;
+      /* 「自由」のときは、向きを選ぶ意味がない。幅と高さで決まる */
+      var lay = $("panel").querySelector('[data-lay="p"]');
+      if (lay && lay.parentNode && lay.parentNode.parentNode) {
+        lay.parentNode.parentNode.hidden = free;
+      }
+      $("bdSize").textContent = "紙は "
+        + paperName({ paper: pick.paper, lay: pick.lay, pw: pick.pw, ph: pick.ph })
         + "。あとから変えても、貼った並びは崩れません。";
     }
+    ["bdW", "bdH"].forEach(function (k) {
+      var el = $(k);
+      if (!el) return;
+      el.oninput = function () {
+        pick[k === "bdW" ? "pw" : "ph"] = freeMm(this.value, 210);
+        sizeLine();
+      };
+    });
     sizeLine();
 
     function wire(key) {
@@ -6795,10 +6884,12 @@
       var nm = ($("bdName").value || "").trim() || "名前のないボード";
       if (mk) {
         var rec = { id: uid(), name: nm, paper: pick.paper, lay: pick.lay,
+                    pw: pick.pw, ph: pick.ph,
                     pages: [{ id: uid(), cards: [] }], createdAt: Date.now() };
         saveBoard(rec, function () { closeSheet(); openBoard(rec.id); });
       } else {
         e.name = nm; e.paper = pick.paper; e.lay = pick.lay;
+        e.pw = pick.pw; e.ph = pick.ph;
         saveBoard(e, function () { closeSheet(); paint(); });
       }
     };
@@ -6825,6 +6916,9 @@
     if (!b) return Promise.resolve();
     picking = false; picked = {};
     screen = "board"; curBoard = id; boardSel = "";
+    /* 開くたびに履歴は引き直す。ここから先の手だけを戻せる */
+    undoStart(b);
+    boardZoom = 1;
     clearSearch();
     dropUrls(); items = [];
     return DB.all("items").then(function (all) { browseAll = all; }, function () {})
@@ -6876,10 +6970,59 @@
         if (el) { paintGrid(b, el); wireBoard(b, pg, el); }
       });
       /* 文字の大きさは紙の幅から決まる。実寸を測って配っておく */
+      setZoom(boardZoom, b);
       sizeText();
       wirePager(b);
       paintFix(b);
     });
+  }
+
+  /* ============================================================
+     紙を大きくして見る
+     ------------------------------------------------------------
+     細かいところを触るときに、紙が画面の幅そのままだと小さすぎる。
+     横にはみ出したぶんは、そのまま横に送って見る。
+     開いているあいだだけの話なので、ボードには書き込まない。
+     ============================================================ */
+  var boardZoom = 1, BZ = { min: 1, max: 4 };
+  function setZoom(v, b) {
+    boardZoom = Math.max(BZ.min, Math.min(BZ.max, Math.round(v * 100) / 100));
+    var st = document.querySelector("main");
+    if (st) st.style.setProperty("--bz", boardZoom);
+    sizeText();
+    var z = $("bdZoom");
+    if (z) z.textContent = Math.round(boardZoom * 100) + "%";
+  }
+  function zoomSheet(b) {
+    sheet('<div class="panel-head"><h3>紙の大きさ</h3>'
+      + '<button class="iconbtn ok" id="bzOk" aria-label="閉じる"><svg><use href="#i-check"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + '<div class="field"><label class="label" for="bzR">'
+      + '大きさ <span id="bzN">' + Math.round(boardZoom * 100) + "%</span></label>"
+      + '<input type="range" id="bzR" min="100" max="400" step="5" value="'
+      + Math.round(boardZoom * 100) + '" style="width:100%"></div>'
+      + '<div class="segrow" id="bzQuick"></div>'
+      + '<div class="hintline">大きくすると、はみ出したぶんは横に送って見られます。'
+      + "指2本で紙の何もないところをつまんでも変えられます。"
+      + "刷る大きさは変わりません。</div>"
+      + "</div></div>", "dialog");
+    $("bzQuick").innerHTML = [100, 150, 200, 300, 400].map(function (n) {
+      return '<button class="seg" data-bz="' + n + '">' + n + "%</button>";
+    }).join("");
+    function sync() {
+      var n = Math.round(boardZoom * 100);
+      if ($("bzN")) $("bzN").textContent = n + "%";
+      if ($("bzR")) $("bzR").value = String(n);
+      Array.prototype.forEach.call(document.querySelectorAll("[data-bz]"), function (bt) {
+        bt.setAttribute("aria-pressed", String(Number(bt.getAttribute("data-bz")) === n));
+      });
+    }
+    $("bzR").oninput = function () { setZoom(Number(this.value) / 100, b); sync(); };
+    Array.prototype.forEach.call(document.querySelectorAll("[data-bz]"), function (bt) {
+      bt.onclick = function () { setZoom(Number(bt.getAttribute("data-bz")) / 100, b); sync(); };
+    });
+    $("bzOk").onclick = closeSheet;
+    sync();
   }
 
   /* 紙の実寸を、その紙の中へ配る。
@@ -6993,11 +7136,19 @@
     if (!el) return;
     var g = b.grid || "";
     var now = gridOf(b);
-    el.innerHTML = '<button id="bdGrid"><span class="bk' + (g === "fine" ? " fine" : "") + '"></span>'
+    el.innerHTML = '<button id="bdUndo" class="turn" aria-label="戻す" title="戻す"'
+      + (canUndo() ? "" : " disabled") + ">↶</button>"
+      + '<button id="bdRedo" class="turn" aria-label="進める" title="進める"'
+      + (canRedo() ? "" : " disabled") + ">↷</button>"
+      + '<button id="bdZoom" aria-label="大きさ" title="紙の大きさ">' + Math.round(boardZoom * 100) + "%</button>"
+      + '<button id="bdGrid"><span class="bk' + (g === "fine" ? " fine" : "") + '"></span>'
       + esc(now.name) + "</button>"
       + '<button id="bdSnap" aria-pressed="' + (!!b.snap) + '">吸い付き</button>'
       + '<span style="flex:1 1 auto"></span>'
       + '<button id="bdPdf" class="go">PDFにする</button>';
+    $("bdUndo").onclick = function () { undoStep(b, true); };
+    $("bdRedo").onclick = function () { undoStep(b, false); };
+    $("bdZoom").onclick = function () { zoomSheet(b); };
     /* 押すたびに、線なし→縦→横→格子と回る。1タップで変えられる */
     $("bdGrid").onclick = function () {
       var i = 0;
@@ -7025,8 +7176,7 @@
         + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
         + (isText(c)
             ? '<button data-bd="edit">文字</button>'
-            : '<button data-bd="cut" aria-label="切り取り" title="切り取り"'
-              + (cutOf(c) ? ' class="on"' : "") + ">切る</button>")
+            : '<button data-bd="cut"' + (cutOf(c) ? ' class="on"' : "") + ">切り取り</button>")
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
@@ -7283,7 +7433,7 @@
   function wireBoard(b, page, paper) {
     if (!paper) return;
     var pts = {}, n = 0, node = null, card = null;
-    var start = null, moved = false;
+    var start = null, moved = false, zoomFrom = null;
 
     function find(id) {
       var out = null;
@@ -7316,10 +7466,26 @@
         start.a = Math.atan2(c2.y - a.y, c2.x - a.x) * 180 / Math.PI;
         start.w0 = card.w; start.r0 = card.rot || 0;
       }
+      /* 何もないところを2本でつまんだら、紙そのものを大きくする */
+      if (n === 2 && !card) {
+        var kk = Object.keys(pts), p1 = pts[kk[0]], p2 = pts[kk[1]];
+        zoomFrom = { d: Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1, z: boardZoom };
+      }
     });
 
     paper.addEventListener("pointermove", function (e) {
-      if (!pts[e.pointerId] || !card || !start) return;
+      if (!pts[e.pointerId]) return;
+      /* 何もないところの2本指。紙そのものを大きくする */
+      if (!card && zoomFrom && n >= 2) {
+        pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+        var zk = Object.keys(pts), z1 = pts[zk[0]], z2 = pts[zk[1]];
+        var zd = Math.hypot(z1.x - z2.x, z1.y - z2.y) || 1;
+        setZoom(zoomFrom.z * (zd / zoomFrom.d), b);
+        moved = true;
+        e.preventDefault();
+        return;
+      }
+      if (!card || !start) return;
       pts[e.pointerId] = { x: e.clientX, y: e.clientY };
       moved = true;
       if (n >= 2 && start.d) {
@@ -7340,27 +7506,58 @@
         card.x = snapTo(card.x, st.x);
         card.y = snapTo(card.y, st.y);
       }
-      /* 紙の外へは出しきらない。つまみ出して見失わないように */
+      /* 横は紙の外へ出しきらない。縦は、ほかのページへ運べるよう、
+         どこまでも行かせる。放した先に別の紙があれば、そちらへ移す */
       card.x = Math.max(-0.1, Math.min(1.1, card.x));
-      card.y = Math.max(-0.1, Math.min(1.1, card.y));
+      paper.classList.add("dragging");
       put();
     });
 
     ["pointerup", "pointercancel"].forEach(function (nm) {
       paper.addEventListener(nm, function (e) {
+        var lastX = e.clientX, lastY = e.clientY;
         if (pts[e.pointerId]) { delete pts[e.pointerId]; n = Math.max(0, n - 1); }
         if (n > 0) return;
-        var wasCard = card, had = node;
-        node = null; card = null; start = null;
+        var wasCard = card, had = node, wasZoom = zoomFrom;
+        node = null; card = null; start = null; zoomFrom = null;
+        paper.classList.remove("dragging");
+        if (wasZoom) { moved = false; return; }
         if (!had) { if (boardSel) { boardSel = ""; paintStage(); } return; }
         if (!moved) {
           boardSel = had.getAttribute("data-card");
           paintStage();
           return;
         }
-        if (wasCard) saveBoard(b, function () { paintBoardBar(b); paintEx(); });
+        if (!wasCard) return;
+        /* 指を放したところが別のページの紙なら、そちらへ運ぶ */
+        var to = paperUnder(lastX, lastY);
+        if (to && to.el !== paper) {
+          var i = page.cards.indexOf(wasCard);
+          if (i >= 0) page.cards.splice(i, 1);
+          var r = to.el.getBoundingClientRect();
+          wasCard.x = Math.max(0.02, Math.min(0.98, (lastX - r.left) / r.width));
+          wasCard.y = Math.max(0.02, Math.min(0.98, (lastY - r.top) / r.height));
+          pagesOf(b)[to.n].cards.push(wasCard);
+          saveBoard(b, function () { paint(); toast((to.n + 1) + " ページ目へ移しました"); });
+          return;
+        }
+        /* どこへも運んでいないなら、紙の中へ戻す */
+        wasCard.y = Math.max(-0.1, Math.min(1.1, wasCard.y));
+        saveBoard(b, function () { paint(); });
       });
     });
+  }
+
+  /* その場所にある紙を返す。ページを跨いで運ぶときに使う */
+  function paperUnder(x, y) {
+    var out = null;
+    Array.prototype.forEach.call(document.querySelectorAll(".paper[data-page]"), function (el) {
+      var r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        out = { el: el, n: Number(el.getAttribute("data-page")) };
+      }
+    });
+    return out;
   }
 
   /* 印刷に耐える大きさで描く。画面に出している目安の線は描かない */
