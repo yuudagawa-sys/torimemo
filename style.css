@@ -1750,9 +1750,10 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 /* 自分で選んだ絵を入れたときは、文字も記号も出さない */
 .tabbar .metab.pic{border-color:var(--line2); color:transparent}
 .banner .bmark{
-  /* ヘルベチカは字面が広いので、字間を空けずに組む */
+  /* 欧文の大文字で組む銘。大文字は字と字が詰まって見えるので、
+     小文字まじりのときと違って、少し字間を空けたほうが読める */
   font-family:var(--ui); font-weight:700; font-size:12.5px;
-  letter-spacing:-.005em; color:var(--ink3);
+  letter-spacing:.08em; color:var(--ink3);
 }
 .banner.has{
   display:block; padding:0; min-height:0;

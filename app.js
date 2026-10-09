@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "76";
+  var APPVER = "77";
 
   /* ============================================================
      小道具
@@ -1574,7 +1574,9 @@
     } else {
       el.className = "banner";
       el.style.background = col || "";
-      el.innerHTML = '<span class="bmark">フォルポ</span>';
+      /* 右上の銘だけは欧文の大文字。画面のほかの場所は「フォルポ」で通す。
+         ここは字面を見せる印なので、カタカナより欧文のほうが締まる */
+      el.innerHTML = '<span class="bmark">FOLPO</span>';
     }
   }
 
@@ -6102,7 +6104,7 @@
       if (t) t.onclick = function () {
         say("試しています…");
         var made = null;
-        Shelf.newRoom("フォルポ_接続の確認").then(function (id) {
+        Shelf.newRoom(ROOT_NAME + "_接続の確認").then(function (id) {
           made = id;
           return Shelf.put(id, "test.txt", new Blob(["ok"], { type: "text/plain" }));
         }).then(function () {
