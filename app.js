@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "79";
+  var APPVER = "80";
 
   /* ============================================================
      小道具
@@ -71,7 +71,7 @@
     /* 黙って合鍵を取り直せなかったときの合図。中の言葉なので、
        そのまま出すと「quiet」とだけ表示されてしまう */
     if (m === "quiet") {
-      return "Googleとつながりませんでした。下の右端にある丸から、もう一度ログインしてください。";
+      return "Googleとつながりませんでした。" + meWhere() + "から、もう一度ログインしてください。";
     }
     if (e.name && e.name !== "Error" && m.indexOf(e.name) < 0) m += "（" + e.name + "）";
     return m;
@@ -560,7 +560,7 @@
     }).then(function (r) {
       if (r.status === 401 || r.status === 403) {
         gTok = null;
-        throw new Error("ログインが切れました。下の右端にある丸から、もう一度ログインしてください。");
+        throw new Error("ログインが切れました。" + meWhere() + "から、もう一度ログインしてください。");
       }
       if (!r.ok) throw new Error("Googleが受け付けませんでした（" + r.status + "）。");
       return r.status === 204 ? null : r.json();
@@ -1400,7 +1400,7 @@
 
   function colorDialog(slot) {
     var cur = recall(slot + "col") || "";
-    var name = slot === "bg1" ? "上のエリア" : slot === "bg2" ? "中のエリア" : "下のエリア";
+    var name = slot === "bg1" ? "上のエリア" : slot === "bg2" ? "中のエリア" : "メニューのエリア";
 
     $("minibox").innerHTML = "<h4>" + esc(name) + "の色</h4>"
       + "<p>押すとすぐ変わります。決まったら閉じてください。</p>"
@@ -2005,6 +2005,15 @@
     }, true);
   }
 
+  /* 案内の文で、メニューの場所をどう言うか。
+     広い画面ではメニューが下の帯から左の袖へ移るので、
+     「下の右端にある丸」のままでは、どこを指しているのか分からなくなる */
+  function wideDock() {
+    try { return window.matchMedia("(min-width:1000px)").matches; } catch (e) { return false; }
+  }
+  function meWhere() { return wideDock() ? "左のメニューの下にある丸" : "下の右端にある丸"; }
+  function plusWhere() { return wideDock() ? "左のメニューの" : "下の"; }
+
   function standalone() {
     return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   }
@@ -2390,7 +2399,7 @@
         stage.innerHTML = '<div class="nothing">この条件に合う写真はありません。</div>';
       } else {
         stage.innerHTML = '<div class="blank"><h2>' + esc((exById(curEx) || {}).name || "") + " はまだ空です</h2>"
-          + '<p>下の <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・書類・メモを追加できます。'
+          + "<p>" + plusWhere() + ' <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・書類・メモを追加できます。'
           + "現場ではまず撮って放り込むだけで大丈夫です。整理は帰ってからまとめてやれます。</p></div>";
       }
       return;
@@ -2763,7 +2772,7 @@
       + '<li><span class="k">01</span><div><b>フォルダをつくる</b>'
       + "<span>ひとつの案件・旅行・会議につき、ひとつ。テンプレートを選ぶと、名前とメモの形が最初から入ります。</span></div></li>"
       + '<li><span class="k">02</span><div><b>放り込む</b>'
-      + '<span>下の <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・書類・メモ。数の上限はありません。</span></div></li>'
+      + "<span>" + plusWhere() + ' <span class="inlineplus">＋</span> から、撮る・写真・音声・動画・書類・メモ。数の上限はありません。</span></div></li>'
       + '<li><span class="k">03</span><div><b>カテゴリで絞り込む</b>'
       + "<span>「仕事」「旅」などの名前を付けておくと、この画面の上でそれを押したとき、そのフォルダだけが並びます。</span></div></li>"
       + '<li><span class="k">04</span><div><b>タグで拾う</b>'
@@ -6138,7 +6147,7 @@
         }).join("")
           + (list.length < 2
               ? '<div class="hintline">ほかの端末はまだログインしていません。'
-                + "その端末でも、画面の<b>下の右端にある丸</b>から同じGoogleアカウントにログインしてください。</div>"
+                + "その端末でも、画面の<b>" + meWhere() + "</b>から同じGoogleアカウントにログインしてください。</div>"
               : "");
       }).catch(function (e) {
         if ($("tmWho")) $("tmWho").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
@@ -6294,9 +6303,9 @@
       + "その場で撮ったもの・書いたものを放り込んでいくアプリです。</div>"
 
       + qa("はじめかた",
-          "<p>下の<b>＋ 新しいフォルダ</b>から、出来事ごとにフォルダを1つ作ります。"
+          "<p>" + plusWhere() + "<b>＋ 新しいフォルダ</b>から、出来事ごとにフォルダを1つ作ります。"
           + "展示会、取材、旅、会議。テンプレートを選ぶと、名前とメモの形が最初から入ります。</p>"
-          + "<p>フォルダを開いて、下の<b>＋</b>から 撮る・写真・音声・動画・書類・メモ。"
+          + "<p>フォルダを開いて、" + plusWhere() + "<b>＋</b>から 撮る・写真・音声・動画・書類・メモ。"
           + "数の上限はありません。手が離せないときは、声で残せます。</p>")
 
       + qa("並べ替えと、写真を直す",
@@ -6312,7 +6321,7 @@
           + "<p>★を付けたものだけを並べることもできます。</p>")
 
       + qa("iPhoneとパソコンで同じ中身にする",
-          "<p>使う端末それぞれで、画面の<b>下の右端にある丸</b>から同じGoogleアカウントにログインします。"
+          "<p>使う端末それぞれで、画面の<b>" + meWhere() + "</b>から同じGoogleアカウントにログインします。"
           + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、フォルポのサーバーは通りません。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
           + "手で合わせたいときは「いますぐ同期」を押します。</p>"
@@ -6338,12 +6347,12 @@
           "<p><b>新しい版が来ない</b><br>アプリをいったん完全に閉じて、開き直してください。"
           + "いまの版は、この設定画面の見出しの横に出ています（v" + esc(APPVER) + "）。</p>"
           + "<p><b>「ログインが切れました」と出た</b><br>合鍵の期限が切れただけです。"
-          + "下の右端にある丸から、もう一度ログインすれば直ります。</p>"
+          + meWhere() + "から、もう一度ログインすれば直ります。</p>"
           + "<p><b>片方の端末にだけ出てこない</b><br>その端末がまだログインしていない可能性があります。"
-          + "下の右端にある丸を押すと、いまログインしている端末が並びます。"
+          + meWhere() + "を押すと、いまログインしている端末が並びます。"
           + "そこに出てこない端末では、ログインして「いますぐ同期」を一度押してください。</p>"
           + "<p><b>ログインしているのに、相手の端末が出てこない</b><br>"
-          + "下の右端にある丸 → <b>置き場を調べる</b>を、両方の端末で押して見比べてください。"
+          + meWhere() + " → <b>置き場を調べる</b>を、両方の端末で押して見比べてください。"
           + "「使っているフォルダ」が同じなら、あとは同期を押すだけでそろいます。"
           + "違っていても、もう一度同期すれば、古いほうのフォルダに自動でそろいます。</p>"
           + "<p><b>写真のところが空のまま</b><br>相手の端末が、まだ写真を送り終わっていません。"
@@ -7253,8 +7262,12 @@
     }
     el.innerHTML = '<div class="boardtools" id="boardTools"></div>'
       + '<div class="boardbar" id="boardBar"></div>';
+    /* 下の帯の上に置く。広い画面ではメニューが左の袖になっていて、
+       高さが画面ぶんある。そのまま持ち上げると帯が画面の外へ飛ぶので、
+       横長（＝下の帯）のときだけ、その高さぶん上げる */
     var dock = document.querySelector(".dock");
-    var dh = dock ? Math.round(dock.getBoundingClientRect().height) : 92;
+    var dr = dock ? dock.getBoundingClientRect() : null;
+    var dh = (dr && dr.width > dr.height) ? Math.round(dr.height) : 0;
     el.style.bottom = dh + "px";
     paintTools(b);
     paintBoardBar(b);
@@ -8467,7 +8480,7 @@
       { k: "banner", name: "上のバナー", note: "いちばん上の帯。横長がきれいに出ます" },
       { k: "bg1",    name: "上のエリア", note: "見出し・タブ・検索窓のうしろ" },
       { k: "bg2",    name: "中のエリア", note: "フォルダや写真が並ぶところ" },
-      { k: "bg3",    name: "下のエリア", note: "ホーム・タグ・設定のバー" }
+      { k: "bg3",    name: "メニューのエリア", note: "ホーム・タグ・設定が並ぶところ" }
     ];
     var skinBody = '<div class="field"><div class="label">バナーと背景</div>'
       + '<div class="skins">' + AREAS.map(function (a) {

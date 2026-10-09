@@ -2105,3 +2105,133 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   /* 横のときは、紙が画面の高さに収まるところまでを目安にする */
   :root[data-screen="board"] .paper{max-width:none}
 }
+
+
+/* 左の袖の頭に出す銘。袖そのものが広い画面だけのものなので、
+   ふだんは隠しておく */
+.sidemark{display:none}
+
+/* ================= 広い画面（パソコン・タブレットの横） =================
+   電話の形のまま横に伸ばすと、中身が左寄せの細い列のまま残って、
+   広い画面がまるで活きない。1000px から作りを組み替える。
+   ・下のバーを左の袖に移す（横に並べると窮屈な5つが、縦なら名前付きで並ぶ）
+   ・空いた下の余白を本文に返す
+   ・本文に上限を置いて、長い行が間延びしないようにする */
+@media (min-width:1000px){
+  :root{
+    --side:228px;    /* 左の袖の幅 */
+    --wide:1200px;   /* 本文の上限 */
+  }
+
+  /* 下の帯ぶんの余白は要らなくなる。そのぶん縦が伸びる */
+  body{ padding-left:var(--side); padding-bottom:30px; }
+
+  /* ---- 下のバー → 左の袖 ---- */
+  .dock{
+    top:0; bottom:0; left:0; right:auto; width:var(--side);
+    display:flex; flex-direction:column;
+    background:var(--card); border-right:1px solid var(--line);
+    pointer-events:auto;
+  }
+  .sidemark{
+    display:block; padding:20px 25px 14px;
+    font-family:var(--ui); font-weight:700; font-size:14px;
+    letter-spacing:.09em; color:var(--ink2);
+  }
+  /* 銘を袖に移したので、上の帯の右上からは下げる。
+     同じ名前が画面に二度出ると、どちらが見出しか分からなくなる */
+  .banner:not(.has){display:none}
+  .tabbar{
+    display:flex; flex-direction:column; align-items:stretch;
+    gap:3px; padding:4px 12px 12px; margin:0; max-width:none;
+    background:none; border:0; flex:1 1 auto;
+  }
+  /* 横一列のときは絵の下に名前を置いていた。縦に並ぶなら横書きのほうが読める */
+  .tabbar button{
+    flex-direction:row; justify-content:flex-start; align-items:center;
+    gap:12px; padding:11px 13px; border-radius:12px;
+  }
+  .tabbar button svg{ width:21px; height:21px; }
+  .tabbar button span{ font-size:14px; max-width:none; letter-spacing:0; }
+  .tabbar button[aria-current="true"]{ background:var(--sunk); }
+  .tabbar button:hover{ background:var(--sunk); }
+  .tabbar .addtab svg{ padding:5px; }
+
+  /* アカウントの丸は袖のいちばん下。ほかの印と左端を揃える */
+  .tabbar .metab{
+    align-self:flex-start; margin:auto 0 6px 13px;
+    width:38px; height:38px; font-size:16px;
+  }
+  .tabbar .metab svg{ width:20px; height:20px; }
+
+  /* 広告は袖の足もと。幅が狭いので、入らなければ折り返す */
+  .adslot{
+    max-width:none; margin:0; height:auto; min-height:50px;
+    padding:8px 10px; flex-wrap:wrap; border-top:1px solid var(--line);
+  }
+
+  /* ---- 本文を広く使う ---- */
+  main, .top-in, .rail, .seek{
+    max-width:var(--wide); margin-left:auto; margin-right:auto;
+  }
+  /* 探す欄は、幅いっぱいに伸ばさない。
+     1000px を超える入力欄は、何を入れる場所なのか分からなくなる */
+  .seekfield{ flex:0 1 560px; }
+
+  /* 指の下に出す知らせは、袖のぶんだけ右へ寄せる。
+     画面のまんなかで測ると、袖にかぶって左に寄って見える */
+  .toast{
+    left:calc(50% + var(--side) / 2);
+    bottom:30px; max-width:calc(100vw - var(--side) - 32px);
+  }
+  .pickbar{
+    left:calc(50% + var(--side) / 2);
+    max-width:calc(100vw - var(--side) - 16px);
+  }
+  .upd{
+    left:calc(50% + var(--side) / 2);
+    bottom:30px; max-width:calc(100vw - var(--side) - 20px);
+  }
+
+  /* ---- ボード ---- */
+  /* 下の固定帯も、袖のぶんだけ右から始める */
+  .boardfix{ left:var(--side); padding-left:0; padding-right:0; }
+  .boardtools, .boardbar{
+    max-width:var(--wide); margin-left:auto; margin-right:auto;
+    padding-left:var(--pad); padding-right:var(--pad);
+  }
+  /* 紙は、画面の高さに収まる大きさで置く。幅いっぱいに広げると、
+     A4の縦は横の1.4倍あるので、下へ大きくはみ出してしまう。
+     大きくして見る（--bz）ぶんは、これまで通り効く */
+  .boardwrap .paper{
+    width:auto; height:calc((100vh - 260px) * var(--bz, 1));
+    max-width:calc(100% * var(--bz, 1));
+  }
+
+  /* はじめの案内は、横に伸ばさない。
+     1行が長すぎると、目が次の行の頭へ戻れなくなる */
+  .blank{ max-width:760px; }
+
+  /* ---- 1件ずつ大きく見る ---- */
+  /* 幅いっぱいに引き伸ばすと、1枚が画面の高さを越えて、
+     1枚見るのに縦へ送ることになる。高さに収まる正方形で止める。
+     下に続く日付・メモ・ボタンも、同じ幅で揃える */
+  .fslide > *, .feedwrap .dots, .feedwrap .slidebody{
+    width:100%; max-width:min(760px, 66vh);
+    margin-left:auto; margin-right:auto;
+  }
+}
+/* 列は、袖を引いたあとの中身の幅で決める。
+   札の一辺が 185〜195px くらいに収まるところを選んである */
+@media (min-width:1200px){
+  .sqgrid{ grid-template-columns:repeat(5, minmax(0,1fr)); }
+}
+@media (min-width:1440px){
+  .sqgrid{ grid-template-columns:repeat(6, minmax(0,1fr)); }
+}
+
+/* 袖が出るほどではないが、720px で止めるには広い幅。
+   左右に余白を残したまま、もう少しだけ中身を広げる */
+@media (min-width:880px) and (max-width:999px){
+  main, .top-in, .rail, .seek, .tabbar, .adslot{ max-width:880px; }
+}
