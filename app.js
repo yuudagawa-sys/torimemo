@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "78";
+  var APPVER = "79";
 
   /* ============================================================
      小道具
@@ -1900,12 +1900,15 @@
         return;
       }
 
-      var h = '<button class="tag" data-c="all" aria-pressed="' + (curCat === "all") + '">すべて<span class="n">' + exs.length + "</span></button>";
+      var h = '<button class="tag" data-c="all" aria-pressed="' + (curCat === "all") + '">すべて<span class="n">' + exs.length + "</span></button>"
+        /* たたむ印は「すべて」のすぐ右。並びのいちばん後ろに置いていたときは、
+           カテゴリが増えるほど遠のいて、横に送らないと押せなかった。
+           帯の頭はいつも同じ場所にあるので、ここなら迷わない */
+        + '<button class="tag railtog shut" id="railLess" aria-label="カテゴリをたたむ"><span class="chev up"></span></button>';
       cks.forEach(function (c) {
         h += '<button class="tag" data-c="' + esc(c) + '" aria-pressed="' + (curCat === c) + '" data-cat="' + esc(c) + '">' + esc(c) + '<span class="n">' + cc[c] + "</span></button>";
       });
       if (noCat && cks.length) h += '<button class="tag" data-c="none" aria-pressed="' + (curCat === "none") + '">カテゴリなし<span class="n">' + noCat + "</span></button>";
-      h += '<button class="tag railtog shut" id="railLess" aria-label="カテゴリをたたむ"><span class="chev up"></span></button>';
       rail.innerHTML = h;
       $("railLess").onclick = function () { remember("railshut", "1"); paintRail(); };
       wireCatHold(rail);
