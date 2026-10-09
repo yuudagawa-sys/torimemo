@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "77";
+  var APPVER = "78";
 
   /* ============================================================
      小道具
@@ -923,13 +923,11 @@
     { k: "mine", t: "自分の順" }
   ];
   var sortMode = "old";
-  /* 「自分の順」は、フォルダの中でだけ意味がある。棚では出さない */
-  function sortList() {
-    return screen === "shelf" ? SORTS.filter(function (x) { return x.k !== "mine"; }) : SORTS;
-  }
+  /* 「自分の順」は、フォルダの中でも棚でも使える。
+     棚では、長押しで動かしたフォルダの並びがこれになる */
+  function sortList() { return SORTS; }
   function sortLabel() {
-    var m = (screen === "shelf" && sortMode === "mine") ? "new" : sortMode;
-    for (var i = 0; i < SORTS.length; i++) if (SORTS[i].k === m) return SORTS[i].t;
+    for (var i = 0; i < SORTS.length; i++) if (SORTS[i].k === sortMode) return SORTS[i].t;
     return SORTS[0].t;
   }
   function sortItems(a) {
@@ -960,7 +958,14 @@
       if (!d) d = (x.createdAt || 0) - (y.createdAt || 0);
       return desc ? -d : d;
     }
-    if (sortMode === "fav") {
+    if (sortMode === "mine") {
+      /* 自分で並べた順。まだ番号のないものは、日付順で後ろにつける */
+      out.sort(function (x, y) {
+        var a = typeof x.ord === "number" ? x.ord : Infinity;
+        var b = typeof y.ord === "number" ? y.ord : Infinity;
+        return (a - b) || byDate(x, y, false);
+      });
+    } else if (sortMode === "fav") {
       out.sort(function (x, y) {
         return ((favs[y.id] || 0) - (favs[x.id] || 0)) || byDate(x, y, true);
       });
@@ -1586,13 +1591,14 @@
     skinSlot = slot;
     $("skinIn").click();
   }
-  /* 場所ごとの仕上がりの寸法。この比で切り取る */
+  /* 場所ごとの仕上がりの寸法。この比で切り取る。
+     round は、丸く出るところ。切り取る画面に丸の目安を出す */
   var SKIN_SIZE = {
     banner: { w: 1200, h: 400 },   /* 横長の帯 */
     bg1:    { w: 1200, h: 800 },   /* 見出しのうしろ */
     bg2:    { w: 900,  h: 1600 },  /* 画面ぜんたい。縦長 */
     bg3:    { w: 1400, h: 320 },   /* 下のバー */
-    me:     { w: 320,  h: 320 }    /* アカウントの丸。正方形で切り取る */
+    me:     { w: 480,  h: 480, round: true }   /* アカウントの丸 */
   };
 
   function saveSkin(file) {
@@ -1612,45 +1618,76 @@
       + '<button class="iconbtn ok" id="cpOk" aria-label="これで入れる"><svg><use href="#i-check"/></svg></button>'
       + "</div></div>"
       + '<div class="panel-body">'
-      + '<div class="cropbox" id="cpBox" style="aspect-ratio:' + spec.w + "/" + spec.h + '">'
+      + '<div class="cropbox' + (spec.round ? " round" : "")
+      + '" id="cpBox" style="aspect-ratio:' + spec.w + "/" + spec.h + '">'
       + '<img id="cpImg" src="' + url + '" alt="" draggable="false">'
       + "</div>"
       + '<div class="field"><div class="label">大きさ</div>'
-      + '<input class="zoom" id="cpZoom" type="range" min="100" max="320" value="100" step="1">'
+      + '<input class="zoom" id="cpZoom" type="range" min="25" max="320" value="100" step="1">'
       + '<div class="hintline">画像を指でずらすと位置が変わります。2本指でつまんでも大きさを変えられます。'
-      + "ここに見えているとおりに切り取って持ちます。</div></div>"
-      + '<div class="panel-foot"><button class="ghost" id="cpFit">はじめに戻す</button></div>'
+      + (spec.round
+          ? "丸の中に入るぶんが、そのまま出ます。"
+          : "ここに見えているとおりに切り取って持ちます。")
+      + "小さくすると引いた絵になり、余ったところは白になります。</div></div>"
+      + '<div class="panel-foot"><button class="ghost" id="cpAll">全体を入れる</button>'
+      + '<button class="ghost" id="cpFit">はじめに戻す</button></div>'
       + "</div>", "dialog");
 
     var box = $("cpBox"), img = $("cpImg"), zoom = $("cpZoom");
-    var st = { s: 1, x: 0, y: 0 };      /* 拡大率と、中心からのずれ（割合） */
+    var st = { s: 1, x: 0, y: 0 };      /* 拡大率と、中心からのずれ（px） */
     var nat = { w: 0, h: 0 };
+    var ZMIN = 0.25, ZMAX = 3.2;
 
+    /* 枠いっぱいに広げたときの大きさを1として、そこからの拡大率で置く。
+       大事なのは、写真の縦横の比をここで崩さないこと。
+       以前は枠の形のまま伸び縮みさせていたので、丸や帯に入れると
+       顔が縦に潰れていた */
+    function fit() {
+      var bw = box.clientWidth, bh = box.clientHeight;
+      if (!nat.w || !nat.h) return { w: bw, h: bh };
+      var k = Math.max(bw / nat.w, bh / nat.h) * st.s;
+      return { w: nat.w * k, h: nat.h * k };
+    }
+    /* 写真まるごとが枠に収まる拡大率。これより小さくすると、
+       四方に白が出る */
+    function whole() {
+      var bw = box.clientWidth, bh = box.clientHeight;
+      if (!nat.w || !nat.h) return 1;
+      return Math.min(bw / nat.w, bh / nat.h) / Math.max(bw / nat.w, bh / nat.h);
+    }
     function draw() {
-      /* cover で収まる大きさを1として、そこからの拡大率で置く */
-      img.style.transform = "translate(-50%, -50%) translate(" + st.x + "px, " + st.y + "px) scale(" + st.s + ")";
+      var d = fit();
+      img.style.width = d.w + "px";
+      img.style.height = d.h + "px";
+      img.style.transform = "translate(-50%, -50%) translate(" + st.x + "px, " + st.y + "px)";
     }
     function clamp() {
-      var bw = box.clientWidth, bh = box.clientHeight;
-      var iw = img.clientWidth * st.s, ih = img.clientHeight * st.s;
-      var mx = Math.max(0, (iw - bw) / 2), my = Math.max(0, (ih - bh) / 2);
+      var bw = box.clientWidth, bh = box.clientHeight, d = fit();
+      /* はみ出しているときは枠を埋めたまま、
+         小さくしているときは枠から出ないところまで動かせる */
+      var mx = Math.abs(d.w - bw) / 2, my = Math.abs(d.h - bh) / 2;
       st.x = Math.max(-mx, Math.min(mx, st.x));
       st.y = Math.max(-my, Math.min(my, st.y));
+    }
+    function setZ(v) {
+      st.s = Math.max(ZMIN, Math.min(ZMAX, v));
+      zoom.value = Math.round(st.s * 100);
+      clamp(); draw();
     }
     img.onload = function () {
       nat.w = img.naturalWidth; nat.h = img.naturalHeight;
       st = { s: 1, x: 0, y: 0 };
-      zoom.value = 100;
-      draw();
+      /* 下限は「まるごと収まる」より、さらにひと回り小さいところまで。
+         正方形の写真を丸に入れるときは whole() が 1 になるので、
+         そこで止めてしまうと、ひと回り小さく置くことができない */
+      zoom.min = String(Math.max(10, Math.round(whole() * 55)));
+      ZMIN = parseInt(zoom.min, 10) / 100;
+      setZ(1);
     };
 
-    zoom.oninput = function () {
-      st.s = parseInt(this.value, 10) / 100;
-      clamp(); draw();
-    };
-    $("cpFit").onclick = function () {
-      st = { s: 1, x: 0, y: 0 }; zoom.value = 100; draw();
-    };
+    zoom.oninput = function () { setZ(parseInt(this.value, 10) / 100); };
+    $("cpFit").onclick = function () { st.x = 0; st.y = 0; setZ(1); };
+    $("cpAll").onclick = function () { st.x = 0; st.y = 0; setZ(whole()); };
 
     /* 指で動かす。2本なら、つまんだ幅で大きさも変える */
     var pts = {}, base = null;
@@ -1672,9 +1709,7 @@
         var a = pts[ids[0]], b = pts[ids[1]];
         var d = Math.hypot(a.x - b.x, a.y - b.y);
         if (base == null) { base = { d: d, s: st.s }; return; }
-        st.s = Math.max(1, Math.min(3.2, base.s * (d / base.d)));
-        zoom.value = Math.round(st.s * 100);
-        clamp(); draw();
+        setZ(base.s * (d / base.d));
       }
     });
     ["pointerup", "pointercancel"].forEach(function (k) {
@@ -1687,16 +1722,20 @@
     };
     $("cpOk").onclick = function () {
       var bw = box.clientWidth, bh = box.clientHeight;
-      var dw = img.clientWidth * st.s, dh = img.clientHeight * st.s;   /* 画面上での見た目の大きさ */
-      var k = spec.w / bw;                                             /* 画面 → 仕上がりの倍率 */
+      var d = fit();                          /* 画面上での見た目の大きさ */
+      var k = spec.w / bw;                    /* 画面 → 仕上がりの倍率 */
       var c = document.createElement("canvas");
       c.width = spec.w; c.height = spec.h;
       var g = c.getContext("2d");
       g.imageSmoothingQuality = "high";
+      /* 引いて使うぶん、写真の外側は白にしておく。
+         何も敷かないと、そこが黒く出る */
+      g.fillStyle = "#FFFFFF";
+      g.fillRect(0, 0, spec.w, spec.h);
       g.drawImage(img,
-        (bw / 2 + st.x - dw / 2) * k,
-        (bh / 2 + st.y - dh / 2) * k,
-        dw * k, dh * k);
+        (bw / 2 + st.x - d.w / 2) * k,
+        (bh / 2 + st.y - d.h / 2) * k,
+        d.w * k, d.h * k);
       c.toBlob(function (blob) {
         try { URL.revokeObjectURL(url); } catch (e) {}
         if (!blob) { toast("画像を作れませんでした。", true); return; }
@@ -1988,36 +2027,90 @@
       + "<span>" + esc(how) + '</span></div><svg><use href="#i-plus"/></svg></button>';
   }
 
-  /* フォルダの長押し。押したまま指を動かさなければ選択肢を出す */
+  /* フォルダの長押し。持ち上がってから指を動かせば並べ替え、
+     動かさずに離せば選択肢。写真のタイルと同じ手ざわりにしてある */
   function wireFolderHold(box) {
     if (!box || box._hold) return;
     box._hold = true;
-    var timer = null, id = "", x0 = 0, y0 = 0, fired = false;
+    var timer = null, id = "", x0 = 0, y0 = 0, held = false, node = null, drag = null;
+    var eat = false, eatTimer = null;
 
     function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+    /* 長押しや並べ替えのあとに続くタップを、1回だけ飲み込む */
+    function eatClick() {
+      eat = true;
+      clearTimeout(eatTimer);
+      eatTimer = setTimeout(function () { eat = false; }, 400);
+    }
+    function lift(n) {
+      n.classList.add("lifted");
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
+    }
+    function drop() { if (node) node.classList.remove("lifted"); }
+    /* 並べ替えの入れもの。正方形のときは格子、行のときは縦一列。
+       さがした結果や、ボードの並びは動かさない */
+    function place(n) {
+      var p = n && n.parentNode;
+      if (!p) return null;
+      if (p.classList.contains("sqgrid")) return { vert: false };
+      if (p.classList.contains("frows")) return { vert: true };
+      return null;
+    }
+
+    /* つまんだとき、ブラウザが「画像を持ち出す」動作を始めて
+       指の追跡が打ち切られるのを止める */
+    box.addEventListener("dragstart", function (ev) { ev.preventDefault(); });
+    /* 持ち上がっているあいだは、指で動かしても画面をスクロールさせない */
+    box.addEventListener("touchmove", function (ev) {
+      if (held) ev.preventDefault();
+    }, { passive: false });
 
     box.addEventListener("pointerdown", function (ev) {
       var f = ev.target.closest("[data-folder]");
       if (!f) return;
       id = f.getAttribute("data-folder");
-      x0 = ev.clientX; y0 = ev.clientY; fired = false;
+      node = f.closest(".fsqwrap, .frowwrap") || f;
+      x0 = ev.clientX; y0 = ev.clientY; held = false; drag = null;
       stop();
       timer = setTimeout(function () {
-        timer = null; fired = true;
-        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
-        folderMenu(id);
+        timer = null; held = true; lift(node);
       }, 480);
     });
+
     box.addEventListener("pointermove", function (ev) {
-      if (!timer) return;
-      if (Math.abs(ev.clientX - x0) > 9 || Math.abs(ev.clientY - y0) > 9) stop();
-    }, { passive: true });
-    box.addEventListener("pointerup", function () { stop(); });
-    box.addEventListener("pointercancel", function () { stop(); fired = false; });
-    /* 長押しで開いたときは、指を離したあとのタップを飲み込む */
+      var far = Math.abs(ev.clientX - x0) > 9 || Math.abs(ev.clientY - y0) > 9;
+      if (!held) { if (far) stop(); return; }
+      if (!drag && far && node) {
+        var pl = place(node);
+        if (!pl) return;
+        try { box.setPointerCapture(ev.pointerId); } catch (e) {}
+        drag = beginReorder(node, { save: saveFolderOrder, vert: pl.vert, keep: true });
+      }
+      if (drag) { ev.preventDefault(); drag.move(ev.clientX, ev.clientY); }
+    });
+
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
+      box.addEventListener(k, function (ev) {
+        stop();
+        var was = held, who = id;
+        held = false;
+        if (drag) {
+          var d = drag; drag = null;
+          drop(); node = null; eatClick(); d.end();
+          return;
+        }
+        drop(); node = null;
+        if (!was) return;
+        eatClick();
+        /* 動かさずに離した → これまで通り選択肢を出す */
+        if (k === "pointerup") folderMenu(who);
+      });
+    });
+
     box.addEventListener("click", function (ev) {
-      if (!fired) return;
-      fired = false;
+      if (!eat) return;
+      eat = false;
+      clearTimeout(eatTimer);
       ev.stopPropagation();
       ev.preventDefault();
     }, true);
@@ -2175,7 +2268,7 @@
 
       if (folders.length) {
         out.push('<div class="shelfsec"><div class="label">フォルダ<span class="n">' + folders.length + "</span></div>");
-        if (shelfView === "sq") out.push('<div class="sqgrid">');
+        out.push(shelfView === "sq" ? '<div class="sqgrid">' : '<div class="frows">');
         folders.forEach(function (e) {
           var cv = cover[e.id];
           var src = cv ? urlCache[cv.thumbId || cv.blobId] : "";
@@ -2205,7 +2298,7 @@
               + esc(e.name) + 'の操作">…</button></div>');
           }
         });
-        if (shelfView === "sq") out.push("</div>");
+        out.push("</div>");
         out.push("</div>");
       } else if (!digging) {
         out.push('<div class="bnone">このカテゴリにはまだフォルダがありません</div>');
@@ -2404,7 +2497,7 @@
       if (!drag && far && !picking && node && node.parentNode
           && node.parentNode.classList.contains("sheetgrid")) {
         try { box.setPointerCapture(e.pointerId); } catch (x) {}
-        drag = beginReorder(node, e);
+        drag = beginReorder(node);
       }
       if (drag) { e.preventDefault(); drag.move(e.clientX, e.clientY); }
     });
@@ -2442,11 +2535,14 @@
 
   /* 並べ替えの本体。指の下に分身を置いて、近いタイルの前か後ろに
      本体を差し込む。並びはその場で組み変わるので、置いた先が目で分かる */
-  function beginReorder(node, e) {
+  function beginReorder(node, opt) {
+    var o = opt || {};
     var grid = node.parentNode;
     var r = node.getBoundingClientRect();
     var ghost = node.cloneNode(true);
-    ghost.className = "dragghost";
+    /* フォルダは、札の形そのものが手がかりになる。
+       もとの組み方を残したまま分身にする */
+    ghost.className = (o.keep ? node.className.replace(/\blifted\b/g, " ") + " " : "") + "dragghost";
     ghost.style.width = r.width + "px";
     ghost.style.height = r.height + "px";
     document.body.appendChild(ghost);
@@ -2495,8 +2591,11 @@
       });
       if (!over) return;
       var b = over.getBoundingClientRect();
-      /* そのタイルの左半分なら手前、右半分なら後ろに入れる */
-      grid.insertBefore(node, x > b.left + b.width / 2 ? over.nextSibling : over);
+      /* 左半分なら手前、右半分なら後ろに入れる。
+         縦一列に並べているときは、上半分と下半分で見る */
+      grid.insertBefore(node, o.vert
+        ? (y > b.top + b.height / 2 ? over.nextSibling : over)
+        : (x > b.left + b.width / 2 ? over.nextSibling : over));
     }
 
     return {
@@ -2506,7 +2605,7 @@
         try { ghost.remove(); } catch (x) {}
         node.classList.remove("ghosted");
         grid.classList.remove("reordering");
-        saveOrder(grid);
+        (o.save || saveOrder)(grid);
       }
     };
   }
@@ -2539,6 +2638,42 @@
     if (sb) sb.textContent = sortLabel();
     DB.putMany(rows).then(function () {
       syncBrowse(rows.map(function (r) { return r[1]; }));
+      paintRail(); paintStage();
+      toast("この並びで覚えました");
+    }).catch(function (e) { toast(why(e), true); paintStage(); });
+  }
+
+  /* フォルダを並べた結果を残す。番号はフォルダそのものに持たせるので、
+     ほかの端末にも同期で伝わる。絞り込みで隠れているぶんを
+     巻き込まないよう、見えているものが元から持っていた番号を配り直す */
+  function saveFolderOrder(cont) {
+    var rows = [];
+
+    /* まだ番号がないなら、いまの並びを土台にして全部に振る */
+    if (exs.some(function (x) { return typeof x.ord !== "number"; })) {
+      sortFolders(exs.slice(), {}).forEach(function (e, i) {
+        e.ord = i; rows.push(["exhibitions", e]);
+      });
+    }
+
+    var ids = Array.prototype.slice.call(cont.children)
+      .map(function (n) {
+        var b = n.querySelector("[data-folder]");
+        return b ? b.getAttribute("data-folder") : "";
+      }).filter(Boolean);
+    var seen = ids.map(exById).filter(Boolean);
+    var slots = seen.map(function (e) { return e.ord; }).sort(function (a, b) { return a - b; });
+    seen.forEach(function (e, i) {
+      if (e.ord !== slots[i]) e.ord = slots[i];
+      rows.push(["exhibitions", e]);
+    });
+
+    sortMode = "mine";
+    remember("sort", "mine");
+    var sb = $("btnSort");
+    if (sb) sb.textContent = sortLabel();
+    DB.putMany(rows).then(function () {
+      touched();
       paintRail(); paintStage();
       toast("この並びで覚えました");
     }).catch(function (e) { toast(why(e), true); paintStage(); });
