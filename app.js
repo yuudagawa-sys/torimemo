@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "84";
+  var APPVER = "85";
 
   /* ============================================================
      小道具
@@ -784,13 +784,16 @@
       var out = [];
       function page(tok) {
         var q = encodeURIComponent("'" + roomId + "' in parents and trashed=false");
-        var f = encodeURIComponent("nextPageToken,files(id,name,size,modifiedTime,lastModifyingUser/displayName)");
+        var f = encodeURIComponent("nextPageToken,files(id,name,size,modifiedTime,createdTime,lastModifyingUser/displayName)");
         return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=1000"
           + (tok ? "&pageToken=" + encodeURIComponent(tok) : "")).then(function (r) {
           (r.files || []).forEach(function (x) {
             out.push({
               fileId: x.id, name: x.name, size: Number(x.size || 0),
               at: Date.parse(x.modifiedTime || 0) || 0,
+              /* 作られた時刻。同じ名前のものが重なったとき、
+                 どれが本体かは Shelf.find と同じ決め方で選ぶ */
+              madeAt: Date.parse(x.createdTime || 0) || 0,
               by: (x.lastModifyingUser && x.lastModifyingUser.displayName) || ""
             });
           });
@@ -5895,12 +5898,35 @@
     });
   }
 
+  /* 重なった自分の記録を片づける。
+     ドライブは同じ名前のファイルを何個でも置けるので、置き換えに
+     失敗した回数ぶん、古い記録が溜まっていく。溜まっても自分のぶんは
+     読み飛ばすので実害は小さいが、ドライブが散らかる。
+     消すのはこの端末自身の古い記録だけ。ほかの端末のものには触らない。
+     残すのは「いちばん先に作られたもの」。Shelf.find が作られた順の
+     先頭を返すので、次に書き込まれるのもそれになる。
+     ここで新しいほうを残すと、さっき送ったばかりの記録を捨ててしまう */
+  function sweepMine(rows, mine) {
+    var ours = (rows || []).filter(function (f) { return f.name === mine; });
+    if (ours.length < 2) return Promise.resolve(0);
+    ours.sort(function (a, b) { return (a.madeAt || 0) - (b.madeAt || 0); });
+    var old = ours.slice(1), n = 0, i = 0;
+    return (function next() {
+      if (i >= old.length) return Promise.resolve(n);
+      var f = old[i++];
+      /* 1つ消せなくても、残りは続ける。次の同期でまた拾う */
+      return Shelf.drop(f.fileId).then(function () { n++; }, function () {}).then(next);
+    })();
+  }
+
   function takeChanges() {
-    var place = null, mine = myIndexName(), fresh = [];
+    var place = null, mine = myIndexName(), fresh = [], swept = 0;
     progress(50);
     return syncPlace().then(function (p) {
       place = p;
       return Shelf.listMany(p.syncs);
+    }).then(function (rows) {
+      return sweepMine(rows, mine).then(function (n) { swept = n; return rows; });
     }).then(function (rows) {
       var others = rows.filter(function (f) {
         if (!/\.json$/.test(f.name) || f.name === mine) return false;
@@ -5908,7 +5934,7 @@
            見張りを増やしても通信が増えないのは、これのおかげ */
         return f.at > Number(recall("seen:" + f.name) || 0);
       });
-      if (!others.length) return null;
+      if (!others.length) return null;   /* 片づけた数は、下で足す */
       fresh = others;
       progress(56);
       step("ほかの端末の記録を読んでいます…（" + others.length + "台）");
@@ -5931,7 +5957,8 @@
       if (!box || !box.length) return "none";
       return applyIndexes(box, place);
     }).then(function (out) {
-      if (out === "none") return { none: true, add: 0, upd: 0, del: 0, got: 0, miss: 0 };
+      if (out === "none") return { none: true, add: 0, upd: 0, del: 0, got: 0, miss: 0, swept: swept };
+      out.swept = swept;
       remember("tookAt", String(Date.now()));
       /* ここまで無事に済んでから控える。途中で切れたら、次にまた降ろす。
          写真が1枚でも取り寄せられていないときは控えない。
@@ -5996,9 +6023,10 @@
       if (down.del) said.push("消し " + down.del + "件");
       if (down.got) said.push("写真 " + down.got + "件を受け取りました");
       if (down.miss) said.push("写真 " + down.miss + "件はまだ向こうが送り終わっていません");
+      if (down.swept) said.push("重なっていた古い記録 " + down.swept + "件を片づけました");
       /* 裏で5分おきに回っているときは、何か増えたときだけ知らせる。
          自分の記録を置き直しただけで毎回しゃべられると、うるさい */
-      var worth = up.sent || down.add || down.upd || down.del || down.got;
+      var worth = up.sent || down.add || down.upd || down.del || down.got || down.swept;
       if (!quietSync) toast(said.length ? ("同期しました（" + said.join(" ・ ") + "）") : "変わったものはありませんでした");
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
       /* 走っている最中に書いたものは、まだ送れていない。
