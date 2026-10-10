@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "81";
+  var APPVER = "82";
 
   /* ============================================================
      小道具
@@ -2127,22 +2127,29 @@
       if (drag) { ev.preventDefault(); drag.move(ev.clientX, ev.clientY); }
     });
 
+    /* onBox は、フォルダの上で離したときだけ true。
+       窓ぜんたいで拾ったぶんは後始末だけにして、選択肢は出さない */
+    function release(k, onBox) {
+      stop();
+      var was = held, who = id;
+      held = false;
+      if (drag) {
+        var d = drag; drag = null;
+        drop(); node = null; eatClick(); d.end();
+        return;
+      }
+      drop(); node = null;
+      if (!was) return;
+      eatClick();
+      /* 動かさずに離した → これまで通り選択肢を出す */
+      if (k === "pointerup" && onBox) folderMenu(who);
+    }
     ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
-      box.addEventListener(k, function (ev) {
-        stop();
-        var was = held, who = id;
-        held = false;
-        if (drag) {
-          var d = drag; drag = null;
-          drop(); node = null; eatClick(); d.end();
-          return;
-        }
-        drop(); node = null;
-        if (!was) return;
-        eatClick();
-        /* 動かさずに離した → これまで通り選択肢を出す */
-        if (k === "pointerup") folderMenu(who);
-      });
+      box.addEventListener(k, function () { release(k, true); });
+    });
+    /* 入れものに届かなかったぶんを拾う */
+    ["pointerup", "pointercancel"].forEach(function (k) {
+      window.addEventListener(k, function () { release(k, false); });
     });
 
     box.addEventListener("click", function (ev) {
@@ -2414,6 +2421,12 @@
   function paintStage() {
     var stage = $("stage"), seq = ++paintSeq;
     if (!booted) return;
+    /* 並べ替えの分身が残っていたら掃く。終わりは取りこぼさない作りに
+       してあるが、残ると指の下でもない絵が画面に貼りついたままになり、
+       壊れたように見えるので、描き直すたびに念のため */
+    Array.prototype.forEach.call(document.querySelectorAll(".dragghost"), function (g) {
+      try { g.remove(); } catch (e) {}
+    });
 
     if (screen === "board") { paintBoard(stage, seq); return; }
     if (!exs.length && !boards.length) { stage.innerHTML = welcome(); return; }
@@ -2548,23 +2561,32 @@
       if (drag) { e.preventDefault(); drag.move(e.clientX, e.clientY); }
     });
 
-    ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
-      box.addEventListener(k, function (e) {
-        clearTimeout(timer);
-        var was = held;
-        held = false;
-        if (drag) { var d = drag; drag = null; drop(); eatClick(); d.end(); return; }
-        if (was && k === "pointerup") {
-          /* 動かさずに離した → これまで通り「選ぶ」に入る */
-          drop();
-          eatClick();
-          if (!picking) { picking = true; picked = {}; }
-          picked[id] = true;
-          paintStage();
-          return;
-        }
+    /* onBox は、タイルの上で離したときだけ true。
+       窓ぜんたいで拾ったぶんは後始末だけにして、
+       「選ぶ」に入れたりはしない */
+    function release(k, onBox) {
+      clearTimeout(timer);
+      var was = held;
+      held = false;
+      if (drag) { var d = drag; drag = null; drop(); node = null; eatClick(); d.end(); return; }
+      if (was && k === "pointerup" && onBox) {
+        /* 動かさずに離した → これまで通り「選ぶ」に入る */
         drop();
-      });
+        eatClick();
+        if (!picking) { picking = true; picked = {}; }
+        picked[id] = true;
+        paintStage();
+        return;
+      }
+      drop();
+    }
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
+      box.addEventListener(k, function () { release(k, true); });
+    });
+    /* 入れものに届かなかったぶんを拾う。持ち上がってもいないのに
+       走らせても何も起きないので、素通しでよい */
+    ["pointerup", "pointercancel"].forEach(function (k) {
+      window.addEventListener(k, function () { release(k, false); });
     });
 
     /* 長押し・並べ替えのあとに続くクリックは飲み込む */
@@ -2644,16 +2666,41 @@
         : (x > b.left + b.width / 2 ? over.nextSibling : over));
     }
 
-    return {
-      move: place,
-      end: function () {
-        clearInterval(tick);
-        try { ghost.remove(); } catch (x) {}
-        node.classList.remove("ghosted");
-        grid.classList.remove("reordering");
-        (o.save || saveOrder)(grid);
-      }
-    };
+    /* 終わりは一度だけ。下の見張りと、呼び出し側からの end が
+       両方来ても、二度は走らせない */
+    var done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      unwatch();
+      clearInterval(tick);
+      try { ghost.remove(); } catch (x) {}
+      node.classList.remove("ghosted");
+      grid.classList.remove("reordering");
+      (o.save || saveOrder)(grid);
+    }
+
+    /* 離した合図が、並べ替えの入れものまで届かないことがある。
+       押さえ（setPointerCapture）が効かなかった、画面の外で離した、
+       別の窓に移った、など。届かないと分身が画面に残り、
+       並べた結果も残らないので、窓ぜんたいでも離れたことを見張る。
+       取りこぼしを拾うだけなので、捕まえる側（capture）で聞く */
+    function watcher() { finish(); }
+    /* 窓そのものが前面でなくなったときだけ終わらせる。
+       blur は捕まえる側（capture）で聞いてはいけない。
+       ページの中のボタンがフォーカスを失っただけでも窓まで降りてきて、
+       動かしている最中に打ち切られてしまう */
+    function away() { if (!document.hasFocus()) finish(); }
+    function unwatch() {
+      window.removeEventListener("pointerup", watcher, true);
+      window.removeEventListener("pointercancel", watcher, true);
+      window.removeEventListener("blur", away);
+    }
+    window.addEventListener("pointerup", watcher, true);
+    window.addEventListener("pointercancel", watcher, true);
+    window.addEventListener("blur", away);
+
+    return { move: place, end: finish };
   }
 
   /* 並べた結果を残す。絞り込みで隠れているものを巻き込まないよう、
