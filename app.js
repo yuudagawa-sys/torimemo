@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "83";
+  var APPVER = "84";
 
   /* ============================================================
      小道具
@@ -5653,23 +5653,6 @@
     try { remember("devnames", JSON.stringify(m)); } catch (e) {}
   }
 
-  /* いまログインしている端末。ドライブに置かれた記録から数える。
-     ここに出てこない端末は、まだログインしていない */
-  function devicesOnDrive() {
-    return hush(function () {
-      return syncPlace().then(function (p) { return Shelf.listMany(p.syncs); });
-    }).then(function (rows) {
-      var me = myIndexName(), names = devNames();
-      return rows.filter(function (f) { return /\.json$/.test(f.name); })
-        .map(function (f) {
-          var id = f.name.replace(/\.json$/, "");
-          return { id: id, mine: f.name === me, at: f.at,
-                   name: f.name === me ? deviceName() : (names[id] || "別の端末") };
-        })
-        .sort(function (a, b) { return (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || b.at - a.at; });
-    });
-  }
-
   /* この端末が持っている記録。写真そのものは入らない */
   function myRecords() {
     return Promise.all([DB.all("exhibitions"), DB.all("items"),
@@ -6122,8 +6105,6 @@
           + '<label class="rowbtn" for="tmAuto" style="cursor:pointer"><div><b>開いたときに自動で同期</b>'
           + "<span>ほかのことをして戻ってきたときも、そっと合わせます</span></div>"
           + '<input type="checkbox" id="tmAuto"' + (recall("autosync") === "0" ? "" : " checked") + "></label>"
-          + '<div class="label" style="margin-top:10px">ログインしている端末</div>'
-          + '<div id="tmWho"><div class="saveflag">調べています…</div></div>'
           + '<div class="label" style="margin-top:10px">セーブデータ</div>'
           + '<button class="rowbtn" id="tmPush"><div><b>まるごと保存</b>'
           + "<span>いまのフォルダ・写真・メモをひとまとめに。前の保存と入れ替わります。"
@@ -6211,28 +6192,6 @@
           + "写真は一度送れば二度は送りません。"
           + "最後に同期したのは " + whenTxt(recall("syncAt"));
       }, 1200);
-
-      /* ここに出てこない端末は、まだログインしていない。
-         「片方だけ出てこない」はたいていこれ */
-      var who = $("tmWho");
-      if (who) devicesOnDrive().then(function (list) {
-        if (!$("tmWho")) return;
-        if (!list.length) {
-          $("tmWho").innerHTML = '<div class="hintline">まだ記録がありません。'
-            + "下の「いますぐ同期」を一度押してください。</div>";
-          return;
-        }
-        $("tmWho").innerHTML = list.map(function (d) {
-          return '<div class="devrow"><b>' + esc(d.name) + (d.mine ? "（この端末）" : "") + "</b>"
-            + "<span>" + whenTxt(d.at) + " に送信</span></div>";
-        }).join("")
-          + (list.length < 2
-              ? '<div class="hintline">ほかの端末はまだログインしていません。'
-                + "その端末でも、画面の<b>" + meWhere() + "</b>から同じGoogleアカウントにログインしてください。</div>"
-              : "");
-      }).catch(function (e) {
-        if ($("tmWho")) $("tmWho").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
-      });
 
       var au = $("tmAuto");
       if (au) au.onchange = function () {
