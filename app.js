@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "82";
+  var APPVER = "83";
 
   /* ============================================================
      小道具
@@ -7331,6 +7331,21 @@
     sizeTimer = setTimeout(sizeText, 120);
   });
 
+  /* 画面の足もとが、何にどれだけ塞がれているか。
+     ・狭い画面：メニューの帯（広告も、その帯の中にいる）
+     ・広い画面：メニューは左の袖へ移っているので、塞いでいるのは広告だけ */
+  function footSpace() {
+    var dock = document.querySelector(".dock");
+    var dr = dock ? dock.getBoundingClientRect() : null;
+    if (!dr) return 92;
+    if (dr.height > dr.width) {          /* 縦長なら左の袖 */
+      var ad = $("adSlot");
+      if (!ad || ad.hidden) return 0;
+      return Math.round(ad.getBoundingClientRect().height);
+    }
+    return Math.round(dr.height);
+  }
+
   /* 下の帯。いつも同じ高さで、同じところに居る。
      高さが変わると画面が跳ねるので、2行ぶんを決め打ちで取る */
   function paintFix(b) {
@@ -7343,13 +7358,7 @@
     }
     el.innerHTML = '<div class="boardtools" id="boardTools"></div>'
       + '<div class="boardbar" id="boardBar"></div>';
-    /* 下の帯の上に置く。広い画面ではメニューが左の袖になっていて、
-       高さが画面ぶんある。そのまま持ち上げると帯が画面の外へ飛ぶので、
-       横長（＝下の帯）のときだけ、その高さぶん上げる */
-    var dock = document.querySelector(".dock");
-    var dr = dock ? dock.getBoundingClientRect() : null;
-    var dh = (dr && dr.width > dr.height) ? Math.round(dr.height) : 0;
-    el.style.bottom = dh + "px";
+    el.style.bottom = footSpace() + "px";
     paintTools(b);
     paintBoardBar(b);
     /* 帯の裏に紙や「ページを足す」が隠れないよう、

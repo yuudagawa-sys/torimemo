@@ -27,6 +27,7 @@
   --rc:16px;      /* 角の丸み（カード・下のバー） */
   --gap:5px;      /* 写真どうしの間隔 */
   --pad:16px;     /* 画面の左右の余白 */
+  --adh:100px;    /* 広告の高さ。320×100 のバナーが入る */
   --cols:3;       /* 一覧の列数 */
   --lead:1.65;    /* 行の高さ */
   color-scheme:light;
@@ -1280,7 +1281,10 @@ header.top{padding-top:env(safe-area-inset-top)}
 
 .adslot{
   display:flex; align-items:center; justify-content:center;
-  height:50px; background:var(--sunk);
+  /* 320×100（大きめのバナー）が入る高さ。
+     広告の寸法は決まった形しかないので、半端な高さにしても
+     入る広告が増えるわけではない。入る形に合わせて取る */
+  height:var(--adh); background:var(--sunk);
   border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom);
   box-sizing:content-box;
@@ -1297,6 +1301,11 @@ header.top{padding-top:env(safe-area-inset-top)}
 /* ドックが低くなったぶん、本文の下余白を詰める */
 body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 .toast{ bottom:calc(98px + env(safe-area-inset-bottom)); }
+/* 広告が出ているぶんは、本文の下をさらに空ける。
+   空けておかないと、いちばん下まで送っても最後の1枚が広告の裏に隠れる */
+:root[data-ad="on"] body{ padding-bottom:calc(84px + var(--adh) + env(safe-area-inset-bottom)); }
+:root[data-ad="on"] .toast{ bottom:calc(98px + var(--adh) + env(safe-area-inset-bottom)); }
+:root[data-ad="on"] .upd{ bottom:calc(104px + var(--adh) + env(safe-area-inset-bottom)); }
 
 /* ================= 書類（PDF・文書・表・スライド） ================= */
 .filetile{
@@ -2121,6 +2130,7 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   :root{
     --side:228px;    /* 左の袖の幅 */
     --wide:1200px;   /* 本文の上限 */
+    --adh:90px;      /* 広告の高さ。728×90 が入る */
   }
 
   /* 下の帯ぶんの余白は要らなくなる。そのぶん縦が伸びる */
@@ -2164,11 +2174,17 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   }
   .tabbar .metab svg{ width:20px; height:20px; }
 
-  /* 広告は袖の足もと。幅が狭いので、入らなければ折り返す */
+  /* 広告は袖に入れない。袖は 228px しかなく、どの広告の形も入らない。
+     袖から出して、本文の下に全幅で敷く */
   .adslot{
-    max-width:none; margin:0; height:auto; min-height:50px;
-    padding:8px 10px; flex-wrap:wrap; border-top:1px solid var(--line);
+    position:fixed; left:var(--side); right:0; bottom:0; z-index:46;
+    height:var(--adh); max-width:none; margin:0; padding-bottom:0;
+    border-top:1px solid var(--line);
   }
+  body{ padding-bottom:30px; }
+  :root[data-ad="on"] body{ padding-bottom:calc(var(--adh) + 30px); }
+  :root[data-ad="on"] .toast,
+  :root[data-ad="on"] .upd{ bottom:calc(var(--adh) + 26px); }
 
   /* ---- 本文を広く使う ---- */
   main, .top-in, .rail, .seek{
@@ -2206,6 +2222,11 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
   .boardwrap .paper{
     width:auto; height:calc((100vh - 260px) * var(--bz, 1));
     max-width:calc(100% * var(--bz, 1));
+  }
+  /* 広告が足もとを取っているぶん、紙はその高さぶん小さくする。
+     引いておかないと、紙の下のほうが道具の帯の裏に入る */
+  :root[data-ad="on"] .boardwrap .paper{
+    height:calc((100vh - 260px - var(--adh)) * var(--bz, 1));
   }
 
   /* はじめの案内は、横に伸ばさない。
