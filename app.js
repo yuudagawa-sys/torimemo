@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "80";
+  var APPVER = "81";
 
   /* ============================================================
      小道具
@@ -1956,17 +1956,25 @@
     rail.addEventListener("dragstart", function (e) { e.preventDefault(); });
     rail.addEventListener("touchmove", function (e) { if (held) e.preventDefault(); }, { passive: false });
 
+    var byMouse = false;
     rail.addEventListener("pointerdown", function (e) {
       var n = e.target.closest("[data-cat]");
       if (!n) return;
       node = n; sx = e.clientX; held = false; dragging = false;
+      byMouse = mouseLike(e);
       clearTimeout(timer);
       timer = setTimeout(function () { held = true; lift(n); }, 450);
     });
 
     rail.addEventListener("pointermove", function (e) {
       if (!node) return;
-      if (!held) { if (Math.abs(e.clientX - sx) > 9) clearTimeout(timer); return; }
+      if (!held) {
+        if (Math.abs(e.clientX - sx) <= 9) return;
+        clearTimeout(timer);
+        /* マウスなら、待たずにそのまま並べ替えへ */
+        if (!byMouse) return;
+        held = true; lift(node);
+      }
       if (!dragging) {
         dragging = true;
         try { rail.setPointerCapture(e.pointerId); } catch (x) {}
@@ -2012,6 +2020,16 @@
     try { return window.matchMedia("(min-width:1000px)").matches; } catch (e) { return false; }
   }
   function meWhere() { return wideDock() ? "左のメニューの下にある丸" : "下の右端にある丸"; }
+
+  /* マウスやトラックパッドで触っているか。
+     指のときは、押したまま動かす＝画面を送る、なので、
+     並べ替えに入る前に「長押し」で意思を確かめる必要がある。
+     マウスには送る動きが無い（送るのはホイール）ので、待つ理由がない。
+     押して動かした時点で並べ替えに入れてよい */
+  function mouseLike(ev) {
+    var t = ev && ev.pointerType;
+    return t === "mouse" || t === "pen" || t === undefined;
+  }
   function plusWhere() { return wideDock() ? "左のメニューの" : "下の"; }
 
   function standalone() {
@@ -2077,12 +2095,14 @@
       if (held) ev.preventDefault();
     }, { passive: false });
 
+    var byMouse = false;
     box.addEventListener("pointerdown", function (ev) {
       var f = ev.target.closest("[data-folder]");
       if (!f) return;
       id = f.getAttribute("data-folder");
       node = f.closest(".fsqwrap, .frowwrap") || f;
       x0 = ev.clientX; y0 = ev.clientY; held = false; drag = null;
+      byMouse = mouseLike(ev);
       stop();
       timer = setTimeout(function () {
         timer = null; held = true; lift(node);
@@ -2091,7 +2111,13 @@
 
     box.addEventListener("pointermove", function (ev) {
       var far = Math.abs(ev.clientX - x0) > 9 || Math.abs(ev.clientY - y0) > 9;
-      if (!held) { if (far) stop(); return; }
+      if (!held) {
+        if (!far) return;
+        stop();
+        /* マウスなら、待たずにそのまま並べ替えへ */
+        if (!byMouse || !node || !place(node)) return;
+        held = true; lift(node);
+      }
       if (!drag && far && node) {
         var pl = place(node);
         if (!pl) return;
@@ -2493,18 +2519,26 @@
       if (held) e.preventDefault();
     }, { passive: false });
 
+    var byMouse = false;
     box.addEventListener("pointerdown", function (e) {
       var f = e.target.closest("[data-open]");
       if (!f) return;
       id = f.getAttribute("data-open"); node = f;
       sx = e.clientX; sy = e.clientY; held = false; drag = null;
+      byMouse = mouseLike(e);
       clearTimeout(timer);
       timer = setTimeout(function () { held = true; lift(f); }, 450);
     });
 
     box.addEventListener("pointermove", function (e) {
       var far = Math.abs(e.clientX - sx) > 9 || Math.abs(e.clientY - sy) > 9;
-      if (!held) { if (far) clearTimeout(timer); return; }
+      if (!held) {
+        if (!far) return;
+        clearTimeout(timer);
+        /* マウスなら、待たずにそのまま並べ替えへ */
+        if (!byMouse || !node || picking) return;
+        held = true; lift(node);
+      }
       /* 持ち上がっている状態で動かしたら、並べ替えに入る */
       if (!drag && far && !picking && node && node.parentNode
           && node.parentNode.classList.contains("sheetgrid")) {
