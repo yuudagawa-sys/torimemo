@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "88";
+  var APPVER = "89";
 
   /* ============================================================
      小道具
@@ -1078,11 +1078,13 @@
   }
 
   /* いまの設定を控えて、次の同期で送る。
-     設定をいじるたびに呼ぶ。中身が変わっていなければ何もしない */
-  function savePrefs() {
+     設定をいじるたびに呼ぶ。中身が変わっていなければ何もしない。
+     force を立てると、同じでも時刻を押し直す。
+     「この端末のを使う」と決めたときに、いちばん新しくするため */
+  function savePrefs(force) {
     var now = readPrefs();
     return DB.get("prefs", "look").then(function (old) {
-      if (old && same(old, now)) return null;
+      if (!force && old && same(old, now)) return null;
       return DB.put("prefs", now).then(function () { touched(); });
     }).catch(function () {});
     function same(a, b) {
@@ -6545,7 +6547,7 @@
      ============================================================ */
   function menuDialog() {
     sheet('<div class="panel-head">'
-      + '<h3><span style="color:var(--mark)">Raw</span>po'
+      + '<h3><span style="color:var(--mark)">フォル</span>ポ'
       + '<span class="ver">v' + esc(APPVER) + "</span></h3>"
       + '<button class="iconbtn" id="sClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
@@ -8682,10 +8684,27 @@
       + "</div>"
       + skinBody
       + body
+      /* どちらの端末の見た目を使うかは、本人にしか決められない。
+         ふだんは「あとで変えたほう」に揃えているが、
+         二台でちがう見た目のまま出会ったときは、それでは決まらない */
+      + '<button class="rowbtn" id="lkPush" style="margin-top:4px"><div>'
+      + "<b>この見た目を、ほかの端末にも送る</b>"
+      + "<span>いまこの端末で見えている配色・背景・広告の設定を、"
+      + "ほかの端末にも写します。食い違っているときはこれで揃います</span></div>"
+      + '<svg><use href="#i-up"/></svg></button>'
       + '</div>'
       + '<div class="panel-foot"><span></span><button class="ghost" id="lkReset">はじめの設定に戻す</button></div>', "dialog");
 
     $("lkClose").onclick = closeSheet;
+
+    $("lkPush").onclick = function () {
+      savePrefs(true).then(function () {
+        closeSheet();
+        if (!Shelf.linked()) { toast("先に" + meWhere() + "からログインしてください。", true); return; }
+        toast("この見た目を送ります…");
+        syncNow();
+      });
+    };
 
     Array.prototype.forEach.call(document.querySelectorAll("[data-pick]"), function (b) {
       b.onclick = function () { closeSheet(); pickSkin(b.getAttribute("data-pick")); };
