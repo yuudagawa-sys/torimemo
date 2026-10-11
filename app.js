@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "85";
+  var APPVER = "86";
 
   /* ============================================================
      小道具
@@ -98,7 +98,7 @@
 
   /* 時刻を持たせる置き場。blobs は中身が変わらないので要らない。
      変わったかどうかは、それを指しているアイテムのほうで分かる */
-  var TRACKED = ["exhibitions", "items", "templates", "brands", "boards"];
+  var TRACKED = ["exhibitions", "items", "templates", "brands", "boards", "prefs"];
   function tracked(store) { return TRACKED.indexOf(store) >= 0; }
 
   /* keep を立てると、すでに書いてある時刻をそのまま使う。
@@ -121,7 +121,7 @@
   }
 
   var DB = (function () {
-    var NAME = "expo-photo-note", VER = 4, dbp = null;
+    var NAME = "expo-photo-note", VER = 5, dbp = null;
 
     function open() {
       if (dbp) return dbp;
@@ -140,6 +140,9 @@
           if (!d.objectStoreNames.contains("templates")) d.createObjectStore("templates", { keyPath: "id" });
           if (!d.objectStoreNames.contains("gone")) d.createObjectStore("gone", { keyPath: "id" });
           if (!d.objectStoreNames.contains("boards")) d.createObjectStore("boards", { keyPath: "id" });
+          /* 見た目の設定。中身は1件だけだが、同期に乗せるために
+             ほかと同じ形（id と時刻を持つ記録）で置く */
+          if (!d.objectStoreNames.contains("prefs")) d.createObjectStore("prefs", { keyPath: "id" });
         };
         r.onsuccess = function () { res(r.result); };
         r.onerror = function () { rej(r.error); };
@@ -1032,6 +1035,52 @@
     });
   }
 
+  /* 同期に乗せる設定。端末ごとに変えたいもの（呼び名・並び順・表示の形）は
+     入れない。ここに入れるのは「どの端末で見ても同じであってほしい」もの。
+     広告を消したかどうかも、買ったのは端末ではなく人なので入れる */
+  var PREF_KEYS = ["theme", "palette", "face", "radius", "density", "cols",
+                   "bannercol", "bg1col", "bg2col", "bg3col", "adfree", "pro"];
+
+  function readPrefs() {
+    var o = { id: "look", skins: [] };
+    PREF_KEYS.forEach(function (k) { o[k] = recall(k) || ""; });
+    SKIN_KEYS.forEach(function (k) { if (SKIN[k]) o.skins.push("skin_" + k); });
+    return o;
+  }
+
+  /* いまの設定を控えて、次の同期で送る。
+     設定をいじるたびに呼ぶ。中身が変わっていなければ何もしない */
+  function savePrefs() {
+    var now = readPrefs();
+    return DB.get("prefs", "look").then(function (old) {
+      if (old && same(old, now)) return null;
+      return DB.put("prefs", now).then(function () { touched(); });
+    }).catch(function () {});
+    function same(a, b) {
+      if (String((a.skins || []).sort()) !== String((b.skins || []).sort())) return false;
+      for (var i = 0; i < PREF_KEYS.length; i++) {
+        if (String(a[PREF_KEYS[i]] || "") !== String(b[PREF_KEYS[i]] || "")) return false;
+      }
+      return true;
+    }
+  }
+
+  /* 届いた設定を、この端末に写す。画像は写真と同じ置き場から
+     すでに降りてきているので、名札を頼りに読み直すだけでよい */
+  function applyPrefs() {
+    return DB.get("prefs", "look").then(function (rec) {
+      if (!rec) return null;
+      PREF_KEYS.forEach(function (k) { remember(k, rec[k] || ""); });
+      applyLook();
+      return loadSkin();
+    }).then(function () { paintAd(); }, function () {});
+  }
+
+  /* 見た目に使う画像。写真と同じやり方で送り合う */
+  function skinIds(pf) {
+    return ((pf && pf.skins) || []).filter(Boolean);
+  }
+
   function setView(v) {
     viewMode = v; remember("view", v);
     syncViewToggle(); paintStage();
@@ -1424,6 +1473,7 @@
 
     function put(v) {
       remember(slot + "col", v);
+      savePrefs();
       DB.del("blobs", "skin_" + slot).catch(function () {}).then(function () {
         try { if (SKIN[slot]) URL.revokeObjectURL(SKIN[slot]); } catch (e) {}
         SKIN[slot] = "";
@@ -1445,7 +1495,7 @@
       lab.querySelector("span").textContent = this.value;
       put(this.value);
     };
-    $("cdReset").onclick = function () { remember(slot + "col", ""); applySkin(); miniClose(); lookDialog(); };
+    $("cdReset").onclick = function () { remember(slot + "col", ""); savePrefs(); applySkin(); miniClose(); lookDialog(); };
     $("cdOk").onclick = function () { miniClose(); lookDialog(); };
   }
 
@@ -1466,6 +1516,7 @@
     $("prNo").onclick = miniClose;
     $("prTry").onclick = function () {
       remember("pro", isPro() ? "0" : "1");
+      savePrefs();
       miniClose();
       toast(isPro() ? "使えるようにしました（確認用）" : "元に戻しました");
       if (isPro()) lookDialog();
@@ -1489,6 +1540,7 @@
     $("adNo").onclick = miniClose;
     $("adTry").onclick = function () {
       remember("adfree", adFree() ? "0" : "1");
+      savePrefs();
       miniClose(); paintAd();
       toast(adFree() ? "広告を消しました（確認用）" : "広告を戻しました");
     };
@@ -1757,6 +1809,7 @@
       remember(slot + "col", "");
       progress(100);
       applySkin();
+      savePrefs();
       closeSheet();
       toast("入れました");
       if (slot === "me") teamSheet(); else lookDialog();
@@ -1768,6 +1821,7 @@
       SKIN[slot] = "";
       remember(slot + "col", "");
       applySkin();
+      savePrefs();
       if (slot === "me") teamSheet(); else lookDialog();
     });
   }
@@ -5659,16 +5713,16 @@
   /* この端末が持っている記録。写真そのものは入らない */
   function myRecords() {
     return Promise.all([DB.all("exhibitions"), DB.all("items"),
-      DB.all("templates"), DB.all("boards"), DB.all("gone")]).then(function (r) {
+      DB.all("templates"), DB.all("boards"), DB.all("gone"), DB.all("prefs")]).then(function (r) {
       return { exhibitions: r[0] || [], items: r[1] || [], templates: r[2] || [],
-               boards: r[3] || [], gone: r[4] || [] };
+               boards: r[3] || [], gone: r[4] || [], prefs: r[5] || [] };
     });
   }
 
   /* いちばん新しい更新時刻。前に送ったときと同じなら、送るものは無い */
   function newestAt(rec) {
     var m = 0;
-    ["exhibitions", "items", "templates", "boards", "gone"].forEach(function (k) {
+    ["exhibitions", "items", "templates", "boards", "gone", "prefs"].forEach(function (k) {
       (rec[k] || []).forEach(function (x) { if (Number(x.upAt) > m) m = Number(x.upAt); });
     });
     return m;
@@ -5719,7 +5773,13 @@
       if (rows === "skip") return "same";
       var there = {};
       rows.forEach(function (f) { there[f.name] = 1; });
-      need = partIds(rec.items).filter(function (id) { return !there[id]; });
+      /* 見た目に使う画像も、写真と同じ置き場へ。
+         これが無いと、設定だけ届いて背景やアイコンが出ない */
+      var want = partIds(rec.items);
+      skinIds((rec.prefs || [])[0]).forEach(function (id) {
+        if (want.indexOf(id) < 0) want.push(id);
+      });
+      need = want.filter(function (id) { return !there[id]; });
       if (!changed && !need.length) { allSent(rec); return "same"; }
 
       /* 記録を先に置き、写真はあとから送る。
@@ -5733,7 +5793,8 @@
       var body = JSON.stringify({
         v: 1, dev: devId(), name: deviceName(), at: Date.now(),
         exhibitions: rec.exhibitions, items: rec.items,
-        templates: rec.templates, boards: rec.boards, gone: rec.gone
+        templates: rec.templates, boards: rec.boards, gone: rec.gone,
+        prefs: rec.prefs
       });
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () {
@@ -5775,7 +5836,7 @@
      逆に、消したあとに別の端末で直してあれば、そちらが新しいので残る。
      どちらも時刻の比べ合いなので、迷うところがない。
      ============================================================ */
-  var SYNCED = ["exhibitions", "items", "templates", "boards"];
+  var SYNCED = ["exhibitions", "items", "templates", "boards", "prefs"];
 
   /* 画面の持ちものを、いまのデータベースから作り直す */
   function reloadAll() {
@@ -5860,6 +5921,9 @@
       progress(74);
       /* 3. 足りない写真・録音・書類を取り寄せる */
       var want = partIds(kept);
+      skinIds(mine.prefs && mine.prefs.look).forEach(function (id) {
+        if (want.indexOf(id) < 0) want.push(id);
+      });
       return DB.keys("blobs").then(function (have) {
         var box = {};
         have.forEach(function (k) { box[k] = 1; });
@@ -5875,6 +5939,7 @@
         if (it.thumbId) type[it.thumbId] = "image/jpeg";
         if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
       });
+      skinIds(mine.prefs && mine.prefs.look).forEach(function (id) { type[id] = "image/jpeg"; });
       return Shelf.listMany(place.partsAll).then(function (rows) {
         var at = {};
         rows.forEach(function (f) { at[f.name] = f.fileId; });
@@ -5965,7 +6030,7 @@
          控えてしまうと「変わっていない」と見なして二度と降ろしにいかず、
          その写真はずっと出てこないままになる */
       if (!out.miss) fresh.forEach(function (f) { remember("seen:" + f.name, String(f.at)); });
-      return reloadAll().then(function () { return out; });
+      return applyPrefs().then(function () { return reloadAll(); }).then(function () { return out; });
     });
   }
 
@@ -8615,13 +8680,13 @@
         Array.prototype.forEach.call(document.querySelectorAll('[data-set="' + key + '"]'), function (x) {
           x.setAttribute("aria-pressed", String(x === b));
         });
-        applyLook(); palName(); paintStage();
+        applyLook(); palName(); paintStage(); savePrefs();
       };
     });
 
     $("lkReset").onclick = function () {
       LOOK.forEach(function (o) { try { localStorage.removeItem("expo." + o.key); } catch (e) {} });
-      applyLook(); paintStage(); closeSheet();
+      applyLook(); paintStage(); savePrefs(); closeSheet();
       toast("はじめの設定に戻しました");
     };
   }
