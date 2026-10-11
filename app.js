@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "86";
+  var APPVER = "87";
 
   /* ============================================================
      小道具
@@ -1041,6 +1041,28 @@
   var PREF_KEYS = ["theme", "palette", "face", "radius", "density", "cols",
                    "bannercol", "bg1col", "bg2col", "bg3col", "adfree", "pro"];
 
+  /* この端末が、見た目を何も選んでいない状態か。
+     色も画像も既定のままなら「まだ何も選んでいない」とみなす */
+  function plainLook() {
+    var pf = readPrefs();
+    if (pf.skins.length) return false;
+    for (var i = 0; i < PREF_KEYS.length; i++) {
+      if (String(pf[PREF_KEYS[i]] || "")) return false;
+    }
+    return true;
+  }
+
+  /* まだ控えが無ければ、いまの設定で作る。
+     ただし何も選んでいない端末では作らない。作ってしまうと、
+     その「ぜんぶ既定値」が、もう片方で選んだ設定を上書きしてしまう */
+  function seedPrefs() {
+    if (plainLook()) return Promise.resolve(null);
+    return DB.get("prefs", "look").then(function (old) {
+      if (old) return null;
+      return savePrefs();
+    }).catch(function () {});
+  }
+
   function readPrefs() {
     var o = { id: "look", skins: [] };
     PREF_KEYS.forEach(function (k) { o[k] = recall(k) || ""; });
@@ -1243,7 +1265,9 @@
     }).then(function () {
       paint();
       paintMe();
-      loadSkin();
+      /* 画像を読んでから控える。読む前だと、入れてある画像を
+         「無い」と数えてしまう */
+      loadSkin().then(seedPrefs, seedPrefs);
       gauge();
       askPersist();
       tellVer();
