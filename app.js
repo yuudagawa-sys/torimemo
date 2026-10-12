@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "97";
+  var APPVER = "98";
 
   /* ============================================================
      小道具
@@ -751,6 +751,15 @@
             mimeType: "application/vnd.google-apps.folder"
           })
         }).then(function (x) { return x.id; });
+      });
+    },
+
+    /* ごみ箱へ移す。ドライブのごみ箱から30日は戻せる */
+    trash: function (fileId) {
+      return gCall(DRIVE + "/" + fileId + "?fields=id", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trashed: true })
       });
     },
 
@@ -6586,6 +6595,22 @@
     }, function () { saveSlot(n, function () { paintSaves(); }); });
   }
 
+  /* スロットを空にする。ドライブの容量はスロットの数だけ使うので、
+     いらなくなったら消せるように。ごみ箱に移すだけなので、30日は戻せる */
+  function dropSlot(n, r) {
+    askYesNo({
+      title: "「" + slotTitle(n, r) + "」を空にする",
+      body: mb(r.size) + " がドライブから消えます。",
+      ok: "空にする"
+    }, function () {
+      Shelf.trash(r.fileId).then(function () {
+        slotMemo(n, null);
+        toast("空にしました");
+        paintSaves();
+      }, function (e) { toast(why(e), true); });
+    });
+  }
+
   function renameSlot(n, r) {
     askText({ title: "名前を変える", value: slotTitle(n, r), ok: "決定" }, function (v) {
       var note = v === "スロット " + n ? "" : v;
@@ -6613,6 +6638,7 @@
       + '<button class="ghost" id="svNo">やめる</button>'
       + '<button class="ghost" id="svName">名前を変える</button>'
       + '<button class="ghost" id="svOver">上書き保存</button>'
+      + '<button class="ghost" id="svDrop">空にする</button>'
       + '<button class="cta" id="svLoad" style="background:var(--ink);color:#fff">ここに戻す</button>'
       + "</div>";
     noAutofill($("minibox"));
@@ -6620,6 +6646,7 @@
     $("svNo").onclick = miniClose;
     $("svName").onclick = function () { miniClose(); renameSlot(n, r); };
     $("svOver").onclick = function () { miniClose(); askSave(n, r); };
+    $("svDrop").onclick = function () { miniClose(); dropSlot(n, r); };
     $("svLoad").onclick = function () { miniClose(); askLoad(r, "「" + slotTitle(n, r) + "」"); };
   }
 
