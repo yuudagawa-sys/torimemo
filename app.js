@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "91";
+  var APPVER = "92";
 
   /* ============================================================
      小道具
@@ -1085,6 +1085,15 @@
     return Promise.resolve(null);
   }
 
+  /* すでに絵を入れてある端末に、いちばん古い印をつける。
+     絵を入れていない端末（0）には必ず勝ち、
+     実際にあとから入れ替えた端末には必ず負ける */
+  function seedFace() {
+    if (!SKIN.me || faceAt()) return;
+    remember("faceAt", "1");
+    touched();
+  }
+
   function readPrefs() {
     var o = { id: "look", skins: [] };
     PREF_KEYS.forEach(function (k) { o[k] = recall(k) || ""; });
@@ -1108,6 +1117,15 @@
   }
 
   function lookAt() { return Number(recall("lookAt") || 0); }
+
+  /* アカウントの丸（アイコンの絵）だけは、見た目の他の設定とは
+     別の時刻で持つ。配色を変えた端末が「いちばん新しい」になると、
+     絵を入れた端末の絵がいつまでも渡らない——という取り残しが起きる。
+     絵は「この端末の見た目」ではなく「このアカウントの顔」なので、
+     一つずつ、最後に変えたものに寄せる */
+  function faceAt() { return Number(recall("faceAt") || 0); }
+  function faceNow() { return SKIN.me ? "skin_me" : ""; }
+  function faceStamp() { remember("faceAt", String(Date.now())); }
 
   /* 届いた設定を、この端末に写す。画像は写真と同じ置き場から
      すでに降りてきているので、名札を頼りに読み直すだけでよい */
@@ -1862,6 +1880,7 @@
       remember(slot + "col", "");
       progress(100);
       applySkin();
+      if (slot === "me") faceStamp();
       savePrefs();
       closeSheet();
       toast("入れました");
@@ -1874,6 +1893,7 @@
       SKIN[slot] = "";
       remember(slot + "col", "");
       applySkin();
+      if (slot === "me") faceStamp();
       savePrefs();
       if (slot === "me") teamSheet(); else lookDialog();
     });
@@ -5860,7 +5880,9 @@
         templates: rec.templates, boards: rec.boards, gone: rec.gone,
         /* 見た目は記録に相乗りさせる。毎回いまのものを載せるので、
            置き場が無い・できていない、といった行き違いが起きない */
-        look: readPrefs(), lookAt: lookAt()
+        look: readPrefs(), lookAt: lookAt(),
+        /* アカウントの丸は、ほかの設定とは別に持たせる */
+        face: faceNow(), faceAt: faceAt()
       });
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () {
@@ -5925,10 +5947,17 @@
     /* 見た目は、このアカウントの中でいちばん最後に変えたものに合わせる。
        どちらの端末が偉いということはない。時刻だけで決める */
     var bestAt = lookAt(), bestLook = null;
+    var faceBest = faceAt(), faceWin = null;
     list.forEach(function (ix) {
       if (Number(ix.lookAt || 0) > bestAt) {
         bestAt = Number(ix.lookAt);
         bestLook = ix.look || null;
+      }
+      /* 丸の絵は別勘定。「絵を消した」も新しければ伝わるので、
+         無い（""）ことも答えのうちとして持っておく */
+      if (Number(ix.faceAt || 0) > faceBest) {
+        faceBest = Number(ix.faceAt);
+        faceWin = ix.face || "";
       }
     });
     return myRecords().then(function (here) {
@@ -6000,6 +6029,7 @@
       skinIds(bestLook || readPrefs()).forEach(function (id) {
         if (want.indexOf(id) < 0) want.push(id);
       });
+      if (faceWin && want.indexOf(faceWin) < 0) want.push(faceWin);
       return DB.keys("blobs").then(function (have) {
         var box = {};
         have.forEach(function (k) { box[k] = 1; });
@@ -6016,6 +6046,7 @@
         if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
       });
       skinIds(bestLook || readPrefs()).forEach(function (id) { type[id] = "image/jpeg"; });
+      if (faceWin) type[faceWin] = "image/jpeg";
       return Shelf.listMany(place.partsAll).then(function (rows) {
         var at = {};
         rows.forEach(function (f) { at[f.name] = f.fileId; });
@@ -6039,6 +6070,23 @@
       remember("lookAt", String(bestAt));
       return applyPrefs(bestLook);
     }).then(function () {
+      /* 丸の絵。向こうのほうが新しければ、入れ替える。
+         向こうが「消した」なら、こちらも消す。
+         こうしないと、絵のある端末と無い端末がすれ違ったまま
+         いつまでも別々の顔でいることになる */
+      if (faceWin === null) return null;
+      remember("faceAt", String(faceBest));
+      if (faceWin) return loadSkin();
+      if (!SKIN.me) return null;
+      return DB.del("blobs", "skin_me").catch(function () {}).then(function () {
+        try { URL.revokeObjectURL(SKIN.me); } catch (e) {}
+        SKIN.me = "";
+        applySkin();
+      });
+    }).then(function () {
+      /* 写したぶんを控え直す。控えないと、次に見にいったときに
+         「この端末で変えた」と見なして、送り返してしまう */
+      remember("looksnap", JSON.stringify(readPrefs()));
       return out;
     });
   }
@@ -6187,6 +6235,7 @@
       /* 合わせ終わってから、見た目の控えを作る。
          まだ誰も置いていないときだけ、この端末のぶんが土台になる */
       seedPrefs();
+      seedFace();
       syncing = false; quietSync = false; syncStep = "";
       busyMark();
       if (after) after();
