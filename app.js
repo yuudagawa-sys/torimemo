@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "93";
+  var APPVER = "94";
 
   /* ============================================================
      小道具
@@ -6181,7 +6181,11 @@
      向こうの古い記録で上書きされたように見えてしまう。
      終わったあとの知らせは、送りと受けをまとめて1つにする。
      別々に出すと、最後の1つしか目に入らない */
-  function syncNow(after, quiet) {
+  /* mode は "both"（ふだん）／"up"（送るだけ）／"down"（受け取るだけ）。
+     押しボタンは別々にしてある。押した人が「何が起きるか」を
+     読まずに分かるように、1つのボタンは1つのことだけをする */
+  function syncNow(after, quiet, mode, again) {
+    mode = mode || "both";
     /* すでに走っているときに押されたら、黙って帰らない。
        写真の初回送信は何分もかかるので、ここで何も言わないと
        「ボタンが反応しない」ように見える。
@@ -6221,12 +6225,23 @@
         && Date.now() - Number(recall("syncAt") || 0) < 12 * 60 * 60 * 1000;
       syncing = false; quietSync = false; syncStep = "";
       busyMark();
+      /* 404 は「あるはずのものが見つからない」。
+         ドライブ側で手で消されたか、置き場が入れ替わったとき。
+         覚えている場所を捨てて、一度だけ探し直してやり直す。
+         ここで直さないと、開き直すまでずっと同じところでつまずく */
+      if (!again && /404/.test((e && e.message) || "")) {
+        syncRooms = null;
+        remember("driveRoot", "");
+        failAt = 0;
+        return syncNow(after, quiet, mode, true);
+      }
       if (!mute) toast(why(e), true);
     }
+    var NONE = { none: true, add: 0, upd: 0, del: 0, got: 0, miss: 0, swept: 0 };
     try {
-    sendChanges().then(function (a) {
+    (mode === "down" ? Promise.resolve({ same: true, sent: 0 }) : sendChanges()).then(function (a) {
       up = a;
-      return takeChanges();
+      return mode === "up" ? NONE : takeChanges();
     }).then(function (down) {
       progress(100);
       remember("syncAt", String(Date.now()));
@@ -6242,7 +6257,11 @@
       /* 裏で5分おきに回っているときは、何か増えたときだけ知らせる。
          自分の記録を置き直しただけで毎回しゃべられると、うるさい */
       var worth = up.sent || down.add || down.upd || down.del || down.got || down.swept;
-      if (!quietSync) toast(said.length ? ("同期しました（" + said.join(" ・ ") + "）") : "変わったものはありませんでした");
+      var nil = mode === "down" ? "ほかの端末に、新しいものはありませんでした"
+              : mode === "up" ? "送るものはありませんでした"
+              : "変わったものはありませんでした";
+      var did = mode === "down" ? "取り込みました" : mode === "up" ? "送りました" : "同期しました";
+      if (!quietSync) toast(said.length ? (did + "（" + said.join(" ・ ") + "）") : nil);
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
       /* 走っている最中に書いたものは、まだ送れていない。
          ここで印を下ろすと、その分が置き去りになる */
@@ -6401,18 +6420,26 @@
           + '<div class="field"><label class="label" for="tmDev">この端末の呼び名</label>'
           + '<input class="inp" id="tmDev" value="' + esc(deviceName()) + '">'
           + '<div class="hintline">送ったものを見分けるための名前です。端末ごとに1つ保管します</div></div>'
-          + '<button class="rowbtn' + (syncing ? " working" : "") + '" id="tmSync"><div><b>いますぐ同期</b>'
+          + '<div class="label" style="margin-top:10px">ほかの端末とそろえる</div>'
+          + '<button class="rowbtn' + (syncing ? " working" : "") + '" id="tmGet"><div><b>ほかの端末の変更を取り込む</b>'
           + '<span id="tmSyncSay">' + (syncing
               ? esc(syncStep || "いま同期しています…")
-              : syncLateSay() + (unsent ? "まだ送っていないものがあります。" : "")
-                + "変わったものを送り、ほかの端末の変わりを受け取ります。"
-                + "写真は一度送れば二度は送りません。"
-                + "最後に同期したのは " + whenTxt(recall("syncAt"))) + "</span></div>"
+              : syncLateSay()
+                + "ほかの端末が置いた新しいものを読み込みます。この端末のものは何も変わりません。"
+                + "最後に取り込んだのは " + whenTxt(recall("tookAt"))) + "</span></div>"
           + '<svg><use href="#i-sync"/></svg></button>'
+          + '<button class="rowbtn" id="tmPut"><div><b>この端末の変更を送る</b>'
+          + '<span id="tmPutSay">' + (unsent ? "まだ送っていないものがあります。" : "")
+          + "ふだんは撮った・書いたあと自動で送られます。急ぐときだけ押してください。"
+          + "最後に送ったのは " + whenTxt(recall("sentAt")) + "</span></div>"
+          + '<svg><use href="#i-up"/></svg></button>'
           + '<label class="rowbtn" for="tmAuto" style="cursor:pointer"><div><b>開いたときに自動で同期</b>'
-          + "<span>ほかのことをして戻ってきたときも、そっと合わせます</span></div>"
+          + "<span>ほかのことをして戻ってきたときも、そっと合わせます（送りと取り込みの両方）</span></div>"
           + '<input type="checkbox" id="tmAuto"' + (recall("autosync") === "0" ? "" : " checked") + "></label>"
-          + '<div class="label" style="margin-top:10px">セーブデータ</div>'
+          + '<div class="label" style="margin-top:10px">セーブデータ（同期とは別のものです）</div>'
+          + '<div class="hintline">同期が「変わったぶんだけ、こまめに行き来させる」のに対して、'
+          + "こちらは<b>その時点まるごと1個のZIP</b>です。置き場所もドライブの別のところで、前の保存と入れ替わります。"
+          + "機種変更や、戻したいときのための控えです。</div>"
           + '<button class="rowbtn" id="tmPush"><div><b>まるごと保存</b>'
           + "<span>いまのフォルダ・写真・メモをひとまとめに。前の保存と入れ替わります。"
           + "最後に保存したのは " + whenTxt(recall("pushedAt")) + "</span></div>"
@@ -6474,10 +6501,15 @@
         toast("この端末は「" + deviceName() + "」として送ります");
       };
 
-      var sy = $("tmSync");
+      var sy = $("tmGet");
       if (sy) sy.onclick = function () {
         if (dev) remember("devname", dev.value.trim());
-        syncNow(function () { teamSheet(); });
+        syncNow(function () { teamSheet(); }, false, "down");
+      };
+      var pu = $("tmPut");
+      if (pu) pu.onclick = function () {
+        if (dev) remember("devname", dev.value.trim());
+        syncNow(function () { teamSheet(); }, false, "up");
       };
 
       /* 走っている間は、この行に様子を出し続ける。
@@ -6487,17 +6519,19 @@
       syncWatch = setInterval(function () {
         var e = $("tmSyncSay");
         if (!e) { clearInterval(syncWatch); syncWatch = null; return; }
-        var row = $("tmSync");
+        var row = $("tmGet"), e2 = $("tmPutSay");
         if (syncing) {
           e.textContent = syncStep || "いま同期しています…";
           if (row) row.classList.add("working");
           return;
         }
         if (row) row.classList.remove("working");
-        e.textContent = syncLateSay() + (unsent ? "まだ送っていないものがあります。" : "")
-          + "変わったものを送り、ほかの端末の変わりを受け取ります。"
-          + "写真は一度送れば二度は送りません。"
-          + "最後に同期したのは " + whenTxt(recall("syncAt"));
+        e.textContent = syncLateSay()
+          + "ほかの端末が置いた新しいものを読み込みます。この端末のものは何も変わりません。"
+          + "最後に取り込んだのは " + whenTxt(recall("tookAt"));
+        if (e2) e2.textContent = (unsent ? "まだ送っていないものがあります。" : "")
+          + "ふだんは撮った・書いたあと自動で送られます。急ぐときだけ押してください。"
+          + "最後に送ったのは " + whenTxt(recall("sentAt"));
       }, 1200);
 
       var au = $("tmAuto");
@@ -6671,7 +6705,7 @@
           "<p>使う端末それぞれで、画面の<b>" + meWhere() + "</b>から同じGoogleアカウントにログインします。"
           + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、フォルポのサーバーは通りません。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
-          + "手で合わせたいときは「いますぐ同期」を押します。</p>"
+          + "手で合わせたいときは「ほかの端末の変更を取り込む」を押します。</p>"
           + "<p>写真は<b>一度送れば二度は送りません</b>。2回目からは記録だけなので、通信はごくわずかです。</p>"
           + "<p>同じものを両方の端末で直したときは、<b>あとで直したほう</b>が残ります。"
           + "片方で消して、もう片方でそのあと直していたときは、直したほうが残ります。</p>")
@@ -6697,7 +6731,7 @@
           + meWhere() + "から、もう一度ログインすれば直ります。</p>"
           + "<p><b>片方の端末にだけ出てこない</b><br>その端末がまだログインしていない可能性があります。"
           + meWhere() + "を押すと、いまログインしている端末が並びます。"
-          + "そこに出てこない端末では、ログインして「いますぐ同期」を一度押してください。</p>"
+          + "そこに出てこない端末では、ログインして「この端末の変更を送る」を一度押してください。</p>"
           + "<p><b>ログインしているのに、相手の端末が出てこない</b><br>"
           + meWhere() + " → <b>置き場を調べる</b>を、両方の端末で押して見比べてください。"
           + "「使っているフォルダ」が同じなら、あとは同期を押すだけでそろいます。"
@@ -8882,7 +8916,7 @@
         closeSheet();
         if (!Shelf.linked()) { toast("先に" + meWhere() + "からログインしてください。", true); return; }
         toast("この見た目を送ります…");
-        syncNow();
+        syncNow(null, false, "up");
       });
     };
 
