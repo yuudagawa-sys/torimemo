@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "89";
+  var APPVER = "90";
 
   /* ============================================================
      小道具
@@ -98,7 +98,7 @@
 
   /* 時刻を持たせる置き場。blobs は中身が変わらないので要らない。
      変わったかどうかは、それを指しているアイテムのほうで分かる */
-  var TRACKED = ["exhibitions", "items", "templates", "brands", "boards", "prefs"];
+  var TRACKED = ["exhibitions", "items", "templates", "brands", "boards"];
   function tracked(store) { return TRACKED.indexOf(store) >= 0; }
 
   /* keep を立てると、すでに書いてある時刻をそのまま使う。
@@ -1063,11 +1063,13 @@
      「きのうパソコンで変えた」ぶんより、「きょうスマホを開いた」ぶんの
      ほうが新しくなり、変えたはずの設定が逆に消される */
   function seedPrefs() {
-    if (plainLook()) return Promise.resolve(null);
-    return DB.get("prefs", "look").then(function (old) {
-      if (old) return null;
-      return savePrefs();
-    }).catch(function () {});
+    if (plainLook() || lookAt()) return Promise.resolve(null);
+    remember("looksnap", JSON.stringify(readPrefs()));
+    /* いちばん古い印。何も選んでいない端末には伝わるが、
+       実際に設定を変えた端末には必ず負ける */
+    remember("lookAt", "1");
+    touched();
+    return Promise.resolve(null);
   }
 
   function readPrefs() {
@@ -1077,34 +1079,35 @@
     return o;
   }
 
-  /* いまの設定を控えて、次の同期で送る。
-     設定をいじるたびに呼ぶ。中身が変わっていなければ何もしない。
-     force を立てると、同じでも時刻を押し直す。
+  /* 見た目を変えたことを控える。置き場（prefs）には入れず、
+     記録そのものに相乗りさせる。写真やフォルダが確かに届いている
+     通り道に乗せたほうが、届かない理由が減る。
+
+     force を立てると、中身が同じでも時刻を押し直す。
      「この端末のを使う」と決めたときに、いちばん新しくするため */
   function savePrefs(force) {
-    var now = readPrefs();
-    return DB.get("prefs", "look").then(function (old) {
-      if (!force && old && same(old, now)) return null;
-      return DB.put("prefs", now).then(function () { touched(); });
-    }).catch(function () {});
-    function same(a, b) {
-      if (String((a.skins || []).sort()) !== String((b.skins || []).sort())) return false;
-      for (var i = 0; i < PREF_KEYS.length; i++) {
-        if (String(a[PREF_KEYS[i]] || "") !== String(b[PREF_KEYS[i]] || "")) return false;
-      }
-      return true;
-    }
+    var now = JSON.stringify(readPrefs());
+    if (!force && now === recall("looksnap")) return Promise.resolve(null);
+    remember("looksnap", now);
+    remember("lookAt", String(Date.now()));
+    touched();
+    return Promise.resolve(null);
   }
+
+  function lookAt() { return Number(recall("lookAt") || 0); }
 
   /* 届いた設定を、この端末に写す。画像は写真と同じ置き場から
      すでに降りてきているので、名札を頼りに読み直すだけでよい */
-  function applyPrefs() {
-    return DB.get("prefs", "look").then(function (rec) {
-      if (!rec) return null;
-      PREF_KEYS.forEach(function (k) { remember(k, rec[k] || ""); });
-      applyLook();
-      return loadSkin();
-    }).then(function () { paintAd(); }, function () {});
+  function applyPrefs(look) {
+    if (!look) return Promise.resolve(null);
+    PREF_KEYS.forEach(function (k) { remember(k, look[k] || ""); });
+    applyLook();
+    return loadSkin().then(function () {
+      /* 写したぶんを控えとして置き直す。置かないと、次に設定を
+         見にいったときに「変わった」と見なして送り返してしまう */
+      remember("looksnap", JSON.stringify(readPrefs()));
+      paintAd();
+    }, function () {});
   }
 
   /* 見た目に使う画像。写真と同じやり方で送り合う */
@@ -1275,6 +1278,7 @@
       paint();
       paintMe();
       loadSkin();
+      paintTopBar();
       gauge();
       askPersist();
       tellVer();
@@ -2108,6 +2112,16 @@
     try { return window.matchMedia("(min-width:1000px)").matches; } catch (e) { return false; }
   }
   function meWhere() { return wideDock() ? "左のメニューの下にある丸" : "下の右端にある丸"; }
+
+  /* 窓のいちばん上、閉じる・最小化がある帯の色。
+     パソコンの窓では、その下が左の袖（白い帯）と地続きに見えるので、
+     帯も白にそろえる。電話では画面ぜんたいが配色の色なので、そのまま */
+  var BAR_LITE = "#A9DDC8";
+  function paintTopBar() {
+    var m = document.querySelector('meta[name="theme-color"][media*="light"]');
+    if (!m) return;
+    m.setAttribute("content", wideDock() ? "#FFFFFF" : BAR_LITE);
+  }
 
   /* マウスやトラックパッドで触っているか。
      指のときは、押したまま動かす＝画面を送る、なので、
@@ -5744,16 +5758,16 @@
   /* この端末が持っている記録。写真そのものは入らない */
   function myRecords() {
     return Promise.all([DB.all("exhibitions"), DB.all("items"),
-      DB.all("templates"), DB.all("boards"), DB.all("gone"), DB.all("prefs")]).then(function (r) {
+      DB.all("templates"), DB.all("boards"), DB.all("gone")]).then(function (r) {
       return { exhibitions: r[0] || [], items: r[1] || [], templates: r[2] || [],
-               boards: r[3] || [], gone: r[4] || [], prefs: r[5] || [] };
+               boards: r[3] || [], gone: r[4] || [] };
     });
   }
 
   /* いちばん新しい更新時刻。前に送ったときと同じなら、送るものは無い */
   function newestAt(rec) {
     var m = 0;
-    ["exhibitions", "items", "templates", "boards", "gone", "prefs"].forEach(function (k) {
+    ["exhibitions", "items", "templates", "boards", "gone"].forEach(function (k) {
       (rec[k] || []).forEach(function (x) { if (Number(x.upAt) > m) m = Number(x.upAt); });
     });
     return m;
@@ -5789,7 +5803,8 @@
       return myRecords();
     }).then(function (r) {
       rec = r;
-      var now = newestAt(rec);
+      /* 見た目を変えただけのときも送る。記録の時刻とは別に数える */
+      var now = Math.max(newestAt(rec), lookAt());
       changed = now > Number(recall("sentUpTo") || 0);
       /* 前に「ぜんぶ上げ終わった」と分かっていて、そこから何も
          変えていないなら、写真置き場を数えにいく必要すらない。
@@ -5807,7 +5822,7 @@
       /* 見た目に使う画像も、写真と同じ置き場へ。
          これが無いと、設定だけ届いて背景やアイコンが出ない */
       var want = partIds(rec.items);
-      skinIds((rec.prefs || [])[0]).forEach(function (id) {
+      skinIds(readPrefs()).forEach(function (id) {
         if (want.indexOf(id) < 0) want.push(id);
       });
       need = want.filter(function (id) { return !there[id]; });
@@ -5825,7 +5840,9 @@
         v: 1, dev: devId(), name: deviceName(), at: Date.now(),
         exhibitions: rec.exhibitions, items: rec.items,
         templates: rec.templates, boards: rec.boards, gone: rec.gone,
-        prefs: rec.prefs
+        /* 見た目は記録に相乗りさせる。毎回いまのものを載せるので、
+           置き場が無い・できていない、といった行き違いが起きない */
+        look: readPrefs(), lookAt: lookAt()
       });
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () {
@@ -5867,7 +5884,7 @@
      逆に、消したあとに別の端末で直してあれば、そちらが新しいので残る。
      どちらも時刻の比べ合いなので、迷うところがない。
      ============================================================ */
-  var SYNCED = ["exhibitions", "items", "templates", "boards", "prefs"];
+  var SYNCED = ["exhibitions", "items", "templates", "boards"];
 
   /* 画面の持ちものを、いまのデータベースから作り直す */
   function reloadAll() {
@@ -5886,6 +5903,16 @@
   function applyIndexes(list, place) {
     var out = { add: 0, upd: 0, del: 0, got: 0, miss: 0 };
     var mine = {}, kept = null, lost = [];
+
+    /* 見た目は、このアカウントの中でいちばん最後に変えたものに合わせる。
+       どちらの端末が偉いということはない。時刻だけで決める */
+    var bestAt = lookAt(), bestLook = null;
+    list.forEach(function (ix) {
+      if (Number(ix.lookAt || 0) > bestAt) {
+        bestAt = Number(ix.lookAt);
+        bestLook = ix.look || null;
+      }
+    });
     return myRecords().then(function (here) {
       SYNCED.forEach(function (st) {
         mine[st] = {};
@@ -5952,7 +5979,7 @@
       progress(74);
       /* 3. 足りない写真・録音・書類を取り寄せる */
       var want = partIds(kept);
-      skinIds(mine.prefs && mine.prefs.look).forEach(function (id) {
+      skinIds(bestLook || readPrefs()).forEach(function (id) {
         if (want.indexOf(id) < 0) want.push(id);
       });
       return DB.keys("blobs").then(function (have) {
@@ -5970,7 +5997,7 @@
         if (it.thumbId) type[it.thumbId] = "image/jpeg";
         if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
       });
-      skinIds(mine.prefs && mine.prefs.look).forEach(function (id) { type[id] = "image/jpeg"; });
+      skinIds(bestLook || readPrefs()).forEach(function (id) { type[id] = "image/jpeg"; });
       return Shelf.listMany(place.partsAll).then(function (rows) {
         var at = {};
         rows.forEach(function (f) { at[f.name] = f.fileId; });
@@ -5989,6 +6016,10 @@
             .catch(function () { out.miss++; }).then(next);
         })();
       });
+    }).then(function () {
+      if (!bestLook) return null;
+      remember("lookAt", String(bestAt));
+      return applyPrefs(bestLook);
     }).then(function () {
       return out;
     });
@@ -6061,7 +6092,7 @@
          控えてしまうと「変わっていない」と見なして二度と降ろしにいかず、
          その写真はずっと出てこないままになる */
       if (!out.miss) fresh.forEach(function (f) { remember("seen:" + f.name, String(f.at)); });
-      return applyPrefs().then(function () { return reloadAll(); }).then(function () { return out; });
+      return reloadAll().then(function () { return out; });
     });
   }
 
@@ -7414,7 +7445,7 @@
   var sizeTimer = null;
   window.addEventListener("resize", function () {
     clearTimeout(sizeTimer);
-    sizeTimer = setTimeout(sizeText, 120);
+    sizeTimer = setTimeout(function () { sizeText(); paintTopBar(); }, 120);
   });
 
   /* 画面の足もとが、何にどれだけ塞がれているか。
