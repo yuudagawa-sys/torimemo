@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "94";
+  var APPVER = "95";
 
   /* ============================================================
      小道具
@@ -1344,7 +1344,9 @@
     /* 合鍵の取り直しは、人が触った直後にしかできない。
        どこを触っても拾えるように、捕まえる側で聞いておく */
     ["pointerup", "keyup"].forEach(function (k) {
-      document.addEventListener(k, topUp, true);
+      /* 少し待ってから。押したときの本来の仕事（写真を選ぶ窓を開ける、
+         画面を切り替える）を先に済ませてもらう */
+      document.addEventListener(k, function () { setTimeout(topUp, 700); }, true);
     });
     /* 窓を閉じる前に、送り残しがあるなら印だけでも残す */
     window.addEventListener("pagehide", function () {
@@ -1628,6 +1630,11 @@
   }
 
   /* 上のバナーと、3つのエリアの背景。画像は端末の中に持つ */
+  /* ファイルを選ぶ窓を開いた時刻。開けている間は、
+     Googleの窓を開ける動き（合鍵の取り直し）を止める */
+  var fileAt = 0;
+  function fileWait() { fileAt = Date.now(); }
+
   var SKIN = { banner: "", bg1: "", bg2: "", bg3: "", me: "" };
   var SKIN_KEYS = ["banner", "bg1", "bg2", "bg3", "me"];
 
@@ -1725,6 +1732,7 @@
   var skinSlot = "";
   function pickSkin(slot) {
     skinSlot = slot;
+    fileWait();
     $("skinIn").click();
   }
   /* 場所ごとの仕上がりの寸法。この比で切り取る。
@@ -3326,10 +3334,10 @@
         var k = b.getAttribute("data-add");
         closeSheet();
         if (k === "shoot") camera();
-        else if (k === "pick") $("fileIn").click();
-        else if (k === "impVid") $("videoIn").click();
-        else if (k === "impAud") $("audioIn").click();
-        else if (k === "impDoc") $("docIn").click();
+        else if (k === "pick") { fileWait(); $("fileIn").click(); }
+        else if (k === "impVid") { fileWait(); $("videoIn").click(); }
+        else if (k === "impAud") { fileWait(); $("audioIn").click(); }
+        else if (k === "impDoc") { fileWait(); $("docIn").click(); }
         else if (k === "text") addTextMemo();
         else if (k === "note") newExDialog();
         else record(k);
@@ -5636,24 +5644,7 @@
       .replace(/\.zip$/, "");
   }
 
-  /* ドライブにアップロードする。端末ごとに1つだけ置き、押すたびに入れ替える */
-  function pushAll(after) {
-    var room = null;
-    toast("ドライブに接続しています…");
-    Shelf.root().then(function (id) {
-      room = id;
-      return makeBackup(null, null);
-    }).then(function (zip) {
-      progress(92);
-      toast("保存しています…（" + mb(zip.size) + "）");
-      return Shelf.save(room, bundleName(), zip).then(function () { return zip; });
-    }).then(function (zip) {
-      progress(100);
-      remember("pushedAt", String(Date.now()));
-      toast("保存しました（" + mb(zip.size) + "）");
-      if (after) after();
-    }).catch(function (e) { progress(100); toast(why(e), true); });
-  }
+
 
   /* ============================================================
      変わったものだけ送る（自動でそろえる・第2段階）
@@ -5896,7 +5887,10 @@
            置き場が無い・できていない、といった行き違いが起きない */
         look: readPrefs(), lookAt: lookAt(),
         /* アカウントの丸は、ほかの設定とは別に持たせる */
-        face: faceNow(), faceAt: faceAt()
+        face: faceNow(), faceAt: faceAt(),
+        /* 広告を消したかどうか。これだけは時刻で competition させない。
+           買い物なので、どれか一台で買ってあれば全部で消えるのが筋 */
+        paid: adFree() ? 1 : 0
       });
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () {
@@ -5961,19 +5955,31 @@
 
     /* 見た目は、このアカウントの中でいちばん最後に変えたものに合わせる。
        どちらの端末が偉いということはない。時刻だけで決める */
-    var bestAt = lookAt(), bestLook = null;
+    var bestAt = lookAt(), bestLook = null, bestDev = devId();
     var faceBest = faceAt(), faceWin = null;
+    var paidThere = false;
     list.forEach(function (ix) {
-      if (Number(ix.lookAt || 0) > bestAt) {
-        bestAt = Number(ix.lookAt);
+      var at = Number(ix.lookAt || 0);
+      /* 時刻が同じときは、端末の札で決める。どちらが偉いかではなく、
+         「どの端末から見ても同じ答えになる」ことが大事。
+         決着をつけないと、二台とも「いちばん古い印（1）」のまま、
+         違う見た目で永久にすれ違う。実際そうなっていた */
+      if (at > bestAt || (at === bestAt && at > 0 && String(ix.dev || "") < bestDev)) {
+        bestAt = at; bestDev = String(ix.dev || "");
         bestLook = ix.look || null;
       }
       /* 丸の絵は別勘定。「絵を消した」も新しければ伝わるので、
          無い（""）ことも答えのうちとして持っておく */
-      if (Number(ix.faceAt || 0) > faceBest) {
-        faceBest = Number(ix.faceAt);
+      var fat = Number(ix.faceAt || 0);
+      if (fat > faceBest) {
+        faceBest = fat;
         faceWin = ix.face || "";
+      } else if (fat === faceBest && fat > 0 && (ix.face || "") && !faceNow() && !faceWin) {
+        /* 同じ時刻なら、絵を持っているほうを採る。
+           こちらが空のまま、すれ違い続けるのを防ぐ */
+        faceWin = ix.face;
       }
+      if (Number(ix.paid || 0)) paidThere = true;
     });
     return myRecords().then(function (here) {
       SYNCED.forEach(function (st) {
@@ -6082,6 +6088,7 @@
       });
     }).then(function () {
       if (!bestLook) return null;
+      out.look = 1;
       remember("lookAt", String(bestAt));
       return applyPrefs(bestLook);
     }).then(function () {
@@ -6090,15 +6097,33 @@
          こうしないと、絵のある端末と無い端末がすれ違ったまま
          いつまでも別々の顔でいることになる */
       if (faceWin === null) return null;
-      remember("faceAt", String(faceBest));
-      if (faceWin) return loadSkin();
-      if (!SKIN.me) return null;
-      return DB.del("blobs", "skin_me").catch(function () {}).then(function () {
-        try { URL.revokeObjectURL(SKIN.me); } catch (e) {}
-        SKIN.me = "";
-        applySkin();
-      });
+      if (!faceWin) {
+        /* 向こうが「絵をやめた」。こちらも合わせる */
+        remember("faceAt", String(faceBest));
+        if (!SKIN.me) return null;
+        return DB.del("blobs", "skin_me").catch(function () {}).then(function () {
+          try { URL.revokeObjectURL(SKIN.me); } catch (e) {}
+          SKIN.me = "";
+          applySkin();
+        });
+      }
+      /* 絵を採るのは、実物が届いているときだけ。
+         届いていないのに印だけ進めると、次からは「もう新しい」と
+         見なして二度と取りにいかず、丸が空のまま固まってしまう */
+      return DB.get("blobs", faceWin).then(function (r) {
+        if (!r || !r.blob) return null;
+        out.look = 1;
+        remember("faceAt", String(faceBest));
+        return loadSkin();
+      }, function () { return null; });
     }).then(function () {
+      /* 広告を消す買い物は、足し算だけ。どれか一台で買ってあれば、
+         この端末でも消す。消えたり出たりすると、払った人を裏切る */
+      if (paidThere && !adFree()) {
+        out.look = 1;
+        remember("adfree", "1");
+        applyLook(); paintAd();
+      }
       /* 写したぶんを控え直す。控えないと、次に見にいったときに
          「この端末で変えた」と見なして、送り返してしまう */
       remember("looksnap", JSON.stringify(readPrefs()));
@@ -6254,9 +6279,10 @@
       if (down.got) said.push("写真 " + down.got + "件を受け取りました");
       if (down.miss) said.push("写真 " + down.miss + "件はまだ向こうが送り終わっていません");
       if (down.swept) said.push("重なっていた古い記録 " + down.swept + "件を片づけました");
+      if (down.look) said.push("見た目をそろえました");
       /* 裏で5分おきに回っているときは、何か増えたときだけ知らせる。
          自分の記録を置き直しただけで毎回しゃべられると、うるさい */
-      var worth = up.sent || down.add || down.upd || down.del || down.got || down.swept;
+      var worth = up.sent || down.add || down.upd || down.del || down.got || down.swept || down.look;
       var nil = mode === "down" ? "ほかの端末に、新しいものはありませんでした"
               : mode === "up" ? "送るものはありませんでした"
               : "変わったものはありませんでした";
@@ -6323,6 +6349,10 @@
   var topupAt = 0, topupDead = 0;
   function topUp() {
     if (!Shelf.linked() || !autoSyncOn()) return;
+    /* 写真を選ぶ窓を開けている間は、割り込まない。
+       合鍵の取り直しはGoogleの窓を開ける動きなので、
+       ここで割り込むと、選ぶ窓のほうが引っ込んでしまう */
+    if (Date.now() - fileAt < 45 * 1000) return;
     /* 連打のたびにGoogleへ頼まない */
     if (Date.now() - topupAt < 30 * 1000) return;
     /* 触っても取れなかったときは、しばらく触らない。
@@ -6372,15 +6402,7 @@
     return "しばらくつながっていません。この画面をひと触りすると、つなぎ直します。";
   }
 
-  /* ドライブにあるものの一覧 */
-  function listBundles() {
-    return Shelf.root().then(function (id) {
-      return Shelf.list(id).then(function (rows) {
-        return rows.filter(function (r) { return BUNDLE_RE.test(r.name); })
-          .sort(function (a, b) { return b.at - a.at; });
-      });
-    });
-  }
+
 
   /* ダウンロードして取り込む。いまあるものを消さず、足して合わせる */
   function pullOne(row, after) {
@@ -6400,6 +6422,132 @@
     var d = new Date(Number(ms));
     return d.getFullYear() + "/" + pad2(d.getMonth() + 1) + "/" + pad2(d.getDate())
       + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+
+  /* ============================================================
+     セーブ・ロード
+     ドライブに5つスロットを持つ。押したときだけ、そのときの
+     ぜんぶを1個のZIPにして置く。戻すときは、そのスロットの
+     中身を足し直す。同期とは別のしくみで、別の場所に置く。
+     ============================================================ */
+  var SAVE_SLOTS = 5;
+  function saveName(n) { return ROOT_NAME + "_セーブ" + n + ".zip"; }
+  var SAVE_RE = new RegExp("^(" + ROOT_NAME + "|" + OLD_ROOT + ")_セーブ([1-9])\\.zip$");
+
+  function listSaves() {
+    return Shelf.root().then(function (id) {
+      return Shelf.list(id).then(function (rows) {
+        var by = {}, old = [];
+        (rows || []).forEach(function (r) {
+          var m = SAVE_RE.exec(r.name);
+          if (m) { by[Number(m[2])] = r; return; }
+          /* 前のやり方（まるごと保存）で置いたものも、戻せるように出す */
+          if (BUNDLE_RE.test(r.name)) old.push(r);
+        });
+        return { by: by, old: old };
+      });
+    });
+  }
+
+  function saveSlot(n, after) {
+    var room = null;
+    toast("ドライブに接続しています…");
+    Shelf.root().then(function (id) {
+      room = id;
+      return makeBackup(null, null);
+    }).then(function (zip) {
+      progress(92);
+      toast("保存しています…（" + mb(zip.size) + "）");
+      return Shelf.save(room, saveName(n), zip).then(function () { return zip; });
+    }).then(function (zip) {
+      progress(100);
+      remember("pushedAt", String(Date.now()));
+      toast("スロット " + n + " に保存しました（" + mb(zip.size) + "）");
+      if (after) after();
+    }).catch(function (e) { progress(100); toast(why(e), true); });
+  }
+
+  function saveSheet() {
+    sheet('<div class="panel-head"><h3>セーブ・ロード</h3>'
+      + '<button class="iconbtn" id="svClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack" id="svBody">'
+      + '<div class="saveflag">探しています…</div></div></div>', "dialog");
+    $("svClose").onclick = closeSheet;
+    paintSaves();
+  }
+
+  function paintSaves() {
+    var box = $("svBody");
+    if (!box) return;
+    listSaves().then(function (got) {
+      if (!$("svBody")) return;
+      var h = "", n;
+      for (n = 1; n <= SAVE_SLOTS; n++) {
+        var r = got.by[n];
+        h += '<button class="rowbtn" data-slot="' + n + '"><div><b>スロット ' + n + "</b>"
+          + "<span>" + (r ? esc(whenTxt(r.at) + " ・ " + mb(r.size)) : "空") + "</span></div>"
+          + '<svg><use href="#i-' + (r ? "out" : "up") + '"/></svg></button>';
+      }
+      got.old.forEach(function (r, i) {
+        h += '<button class="rowbtn" data-old="' + i + '"><div><b>以前の保存（' + esc(bundleWho(r.name)) + "）</b>"
+          + "<span>" + esc(whenTxt(r.at) + " ・ " + mb(r.size)) + "</span></div>"
+          + '<svg><use href="#i-out"/></svg></button>';
+      });
+      $("svBody").innerHTML = h;
+      Array.prototype.forEach.call($("svBody").querySelectorAll("[data-slot]"), function (b) {
+        b.onclick = function () {
+          var k = Number(b.getAttribute("data-slot"));
+          var r = got.by[k];
+          if (!r) return askSave(k, null);
+          slotMenu(k, r);
+        };
+      });
+      Array.prototype.forEach.call($("svBody").querySelectorAll("[data-old]"), function (b) {
+        b.onclick = function () { askLoad(got.old[Number(b.getAttribute("data-old"))], "以前の保存"); };
+      });
+    }).catch(function (e) {
+      if ($("svBody")) $("svBody").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
+    });
+  }
+
+  function nowSize() {
+    return (browseAll || []).reduce(function (a, b) { return a + (b.bytes || 0); }, 0);
+  }
+
+  function askSave(n, r) {
+    var size = nowSize();
+    askYesNo({
+      title: "スロット " + n + " に保存",
+      body: "いまのフォルダ・写真・メモを、まるごとひとつにまとめて置きます。"
+        + (size ? "だいたい " + mb(size) + "。" : "")
+        + (r ? "スロット " + n + " の前の保存は消えます。" : ""),
+      ok: "保存する",
+      safe: !r
+    }, function () { saveSlot(n, function () { paintSaves(); }); });
+  }
+
+  function askLoad(r, title) {
+    askYesNo({
+      title: title + "に戻す",
+      body: "いまこの端末にあるものは消えません。足りないものだけが足されます。"
+        + "同じものが両方にあるときは、保存したほうで上書きされます。",
+      ok: "戻す"
+    }, function () { pullOne(r, function () { paintSaves(); }); });
+  }
+
+  function slotMenu(n, r) {
+    $("minibox").innerHTML = "<h4>スロット " + n + "</h4>"
+      + "<p>" + esc(whenTxt(r.at) + " ・ " + mb(r.size)) + "</p>"
+      + '<div class="minibtns" style="flex-wrap:wrap">'
+      + '<button class="ghost" id="svNo">やめる</button>'
+      + '<button class="ghost" id="svOver">上書き保存</button>'
+      + '<button class="cta" id="svLoad" style="background:var(--ink);color:#fff">ここに戻す</button>'
+      + "</div>";
+    noAutofill($("minibox"));
+    $("mini").className = "mini on";
+    $("svNo").onclick = miniClose;
+    $("svOver").onclick = function () { miniClose(); askSave(n, r); };
+    $("svLoad").onclick = function () { miniClose(); askLoad(r, "スロット " + n); };
   }
 
   var syncWatch = null;
@@ -6436,18 +6584,9 @@
           + '<label class="rowbtn" for="tmAuto" style="cursor:pointer"><div><b>開いたときに自動で同期</b>'
           + "<span>ほかのことをして戻ってきたときも、そっと合わせます（送りと取り込みの両方）</span></div>"
           + '<input type="checkbox" id="tmAuto"' + (recall("autosync") === "0" ? "" : " checked") + "></label>"
-          + '<div class="label" style="margin-top:10px">セーブデータ（同期とは別のものです）</div>'
-          + '<div class="hintline">同期が「変わったぶんだけ、こまめに行き来させる」のに対して、'
-          + "こちらは<b>その時点まるごと1個のZIP</b>です。置き場所もドライブの別のところで、前の保存と入れ替わります。"
-          + "機種変更や、戻したいときのための控えです。</div>"
-          + '<button class="rowbtn" id="tmPush"><div><b>まるごと保存</b>'
-          + "<span>いまのフォルダ・写真・メモをひとまとめに。前の保存と入れ替わります。"
-          + "最後に保存したのは " + whenTxt(recall("pushedAt")) + "</span></div>"
+          + '<button class="rowbtn" id="tmSave"><div><b>セーブ・ロード</b>'
+          + "<span>5つのスロットに控えを取り、好きなところに戻せます</span></div>"
           + '<svg><use href="#i-up"/></svg></button>'
-          + '<button class="rowbtn" id="tmPull"><div><b>保存から戻す</b>'
-          + "<span>保存したところまで戻します。いまの中身は消えません</span></div>"
-          + '<svg><use href="#i-out"/></svg></button>'
-          + '<div id="tmList"></div>'
           + '<button class="rowbtn" id="tmTest"><div><b>やりとりできるか試す</b>'
           + "<span>置き場所を1つ作って、すぐ消します。写真は送りません</span></div>"
           + '<svg><use href="#i-share"/></svg></button>'
@@ -6540,53 +6679,10 @@
         toast(this.checked ? "自動で同期します" : "自動の同期をやめました");
       };
 
-      var push = $("tmPush");
-      if (push) push.onclick = function () {
+      var sv = $("tmSave");
+      if (sv) sv.onclick = function () {
         if (dev) remember("devname", dev.value.trim());
-        /* ひと押しで何メガも送るので、先に行き先と大きさを伝える */
-        var size = (browseAll || []).reduce(function (a, b) { return a + (b.bytes || 0); }, 0);
-        askYesNo({
-          title: "まるごと保存",
-          body: "いまのフォルダ・写真・メモをひとつにまとめて、"
-            + "あなた自身のGoogleドライブの「フォルポ」フォルダに置きます。"
-            + "名前は Folpo_まるごと_" + deviceName() + ".zip です。"
-            + (size ? "だいたい " + mb(size) + " を送ります。" : "")
-            + "前の保存と入れ替わるので、ドライブの中が増えていくことはありません。",
-          ok: "保存する",
-          safe: true
-        }, function () { pushAll(function () { teamSheet(); }); });
-      };
-
-      var pull = $("tmPull");
-      if (pull) pull.onclick = function () {
-        var box = $("tmList");
-        if (!box) return;
-        box.innerHTML = '<div class="saveflag">探しています…</div>';
-        listBundles().then(function (rows) {
-          if (!rows.length) {
-            box.innerHTML = '<div class="hintline">まだ保存がありません。'
-              + "「まるごと保存」を押してから、もう一度ここを見てください。</div>";
-            return;
-          }
-          box.innerHTML = '<div class="label" style="margin-top:6px">ドライブにある保存</div>'
-            + rows.map(function (r, i) {
-              var who = bundleWho(r.name);
-              return '<button class="rowbtn" data-pull="' + i + '"><div><b>' + esc(who) + "</b>"
-                + "<span>" + whenTxt(r.at) + " ・ " + mb(r.size) + "</span></div>"
-                + '<svg><use href="#i-out"/></svg></button>';
-            }).join("");
-          Array.prototype.forEach.call(box.querySelectorAll("[data-pull]"), function (b) {
-            b.onclick = function () {
-              var r = rows[Number(b.getAttribute("data-pull"))];
-              askYesNo({
-                title: "「" + bundleWho(r.name) + "」から戻す",
-                body: "いまこの端末にあるものは消えません。足りないものだけが足されます。"
-                  + "同じものが両方にあるときは、ドライブにあるほうで上書きされます。",
-                ok: "戻す"
-              }, function () { pullOne(r, function () { teamSheet(); }); });
-            };
-          });
-        }).catch(function (e) { box.innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>"; });
+        saveSheet();
       };
 
       var pb = $("tmProbe");
@@ -6710,13 +6806,14 @@
           + "<p>同じものを両方の端末で直したときは、<b>あとで直したほう</b>が残ります。"
           + "片方で消して、もう片方でそのあと直していたときは、直したほうが残ります。</p>")
 
-      + qa("セーブデータ（まるごと保存・保存から戻す）",
-          "<p><b>まるごと保存</b>は、いまの中身をひとまとめにしてドライブに置きます。"
-          + "押すたびに前の保存と入れ替わるので、ドライブの中が増えていくことはありません。</p>"
-          + "<p><b>保存から戻す</b>で、そこまで戻せます。いまの中身は消えず、足りないものだけが足されます。</p>"
+      + qa("セーブ・ロード",
+          "<p>いまの中身をまるごとひとつにまとめて、ドライブの5つのスロットに置きます。"
+          + "同じスロットに保存すると、そのスロットの前の分と入れ替わります。</p>"
+          + "<p>スロットを押して<b>ここに戻す</b>で、そこまで戻せます。"
+          + "いまの中身は消えず、足りないものだけが足されます。</p>"
           + "<p>ドライブに置いたファイルは<b>フォルポがまとめた形</b>です。"
           + "ドライブのアプリで開こうとすると「サポートされていないファイル形式です」と出ますが、"
-          + "壊れているわけではありません。中身を見るときは、フォルポの「保存から戻す」を使ってください。</p>")
+          + "壊れているわけではありません。中身を見るときは、フォルポの「ここに戻す」を使ってください。</p>")
 
       + qa("機種変更・バックアップ",
           "<p>設定の<b>まるごとバックアップ</b>で、すべてをZIPにして書き出せます。"
@@ -6830,7 +6927,7 @@
     };
     $("sSize").onclick = function () { closeSheet(); sizeSheet(); };
     $("sBackup").onclick = backup;
-    $("sRestore").onclick = function () { $("restoreIn").click(); };
+    $("sRestore").onclick = function () { fileWait(); $("restoreIn").click(); };
     $("restoreIn").onchange = function () {
       var f = this.files && this.files[0];
       this.value = "";
