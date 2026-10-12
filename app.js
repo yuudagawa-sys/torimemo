@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "92";
+  var APPVER = "93";
 
   /* ============================================================
      小道具
@@ -1126,6 +1126,16 @@
   function faceAt() { return Number(recall("faceAt") || 0); }
   function faceNow() { return SKIN.me ? "skin_me" : ""; }
   function faceStamp() { remember("faceAt", String(Date.now())); }
+
+  /* 最後に送った見た目の指紋。
+     送るかどうかを「時刻の大小」で決めていたのが間違いだった。
+     前から選んである見た目や、前から入れてある絵には、
+     いちばん古い印（1）しか付かない。記録の時刻（13桁）に必ず負けるので、
+     「変わったものはありませんでした」で終わり、永久に送られなかった。
+     大小ではなく「前に送ったものと違うか」で決める */
+  function lookMark() {
+    return JSON.stringify(readPrefs()) + "|" + lookAt() + "|" + faceNow() + "|" + faceAt();
+  }
 
   /* 届いた設定を、この端末に写す。画像は写真と同じ置き場から
      すでに降りてきているので、名札を頼りに読み直すだけでよい */
@@ -5708,6 +5718,8 @@
   function forgetSync() {
     remember("sentUpTo", "0");
     remember("sentAt", "");
+    /* 見た目の指紋も忘れる。新しい置き場には、まだ何も置いていない */
+    remember("sentMark", "");
     /* 新しい置き場には写真も無い。上げ終わった印も捨てる */
     remember("sentAll", "");
     remember("sweptAt", "0");
@@ -5833,7 +5845,7 @@
   var SWEEP_GAP = 24 * 60 * 60 * 1000;
 
   function sendChanges() {
-    var place = null, rec = null, need = [], sent = 0, changed = false;
+    var place = null, rec = null, need = [], sent = 0, changed = false, mark = "";
     progress(4);
     step("ドライブに接続しています…");
     return syncPlace().then(function (p) {
@@ -5841,9 +5853,11 @@
       return myRecords();
     }).then(function (r) {
       rec = r;
-      /* 見た目を変えただけのときも送る。記録の時刻とは別に数える */
-      var now = Math.max(newestAt(rec), lookAt());
-      changed = now > Number(recall("sentUpTo") || 0);
+      /* 記録が変わったか。見た目と丸の絵は時刻で比べられないので、
+         前に送ったものとの食い違いで見る（lookMark） */
+      var now = newestAt(rec);
+      mark = lookMark();
+      changed = now > Number(recall("sentUpTo") || 0) || mark !== recall("sentMark");
       /* 前に「ぜんぶ上げ終わった」と分かっていて、そこから何も
          変えていないなら、写真置き場を数えにいく必要すらない。
          開くたびに何百件もの一覧を引かないで済む */
@@ -5888,6 +5902,7 @@
         new Blob([body], { type: "application/json" })).then(function () {
         remember("sentAt", String(Date.now()));
         remember("sentUpTo", String(newestAt(rec)));
+        remember("sentMark", mark);
         if (!need.length) { allSent(rec); return null; }
         step("写真を送っています…（" + need.length + "件）");
         var i = 0;
