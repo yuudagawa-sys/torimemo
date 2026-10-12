@@ -582,7 +582,11 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .boardtools{
   display:flex; gap:6px; align-items:center; flex-wrap:nowrap;
   padding:6px 0 2px; min-width:0;
+  /* 幅に入りきらないときは、指で横に送れるようにする。
+     切れたまま（「PDFにす」）にしない */
+  overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none;
 }
+.boardtools::-webkit-scrollbar{display:none}
 .boardtools button{
   padding:7px 12px; border:1px solid var(--line2); border-radius:999px;
   background:var(--card); font-size:12.5px; color:var(--ink);
