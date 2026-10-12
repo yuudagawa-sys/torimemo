@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "96";
+  var APPVER = "97";
 
   /* ============================================================
      小道具
@@ -754,6 +754,15 @@
       });
     },
 
+    /* ファイルに短いメモを添える（中身は変えない） */
+    describe: function (fileId, text) {
+      return gCall(DRIVE + "/" + fileId + "?fields=id", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: text || "" })
+      });
+    },
+
     /* 同じ名前のものを探す。あれば入れ替え、無ければ置く。
        押すたびに増えていかないように */
     find: function (roomId, name) {
@@ -800,7 +809,7 @@
       var out = [];
       function page(tok) {
         var q = encodeURIComponent("'" + roomId + "' in parents and trashed=false");
-        var f = encodeURIComponent("nextPageToken,files(id,name,size,modifiedTime,createdTime,lastModifyingUser/displayName)");
+        var f = encodeURIComponent("nextPageToken,files(id,name,size,modifiedTime,createdTime,description,lastModifyingUser/displayName)");
         return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&pageSize=1000"
           + (tok ? "&pageToken=" + encodeURIComponent(tok) : "")).then(function (r) {
           (r.files || []).forEach(function (x) {
@@ -810,6 +819,8 @@
               /* 作られた時刻。同じ名前のものが重なったとき、
                  どれが本体かは Shelf.find と同じ決め方で選ぶ */
               madeAt: Date.parse(x.createdTime || 0) || 0,
+              /* セーブのスロット名など、ファイルに添えた短いメモ */
+              note: x.description || "",
               by: (x.lastModifyingUser && x.lastModifyingUser.displayName) || ""
             });
           });
@@ -1051,8 +1062,10 @@
   /* 同期に乗せる設定。端末ごとに変えたいもの（呼び名・並び順・表示の形）は
      入れない。ここに入れるのは「どの端末で見ても同じであってほしい」もの。
      広告を消したかどうかも、買ったのは端末ではなく人なので入れる */
+  /* adfree（広告を消した）は入れない。見た目の勝ち負けで
+     広告が出たり消えたりしないよう、別の時刻（adAt）で持つ */
   var PREF_KEYS = ["theme", "palette", "face", "radius", "density", "cols",
-                   "bannercol", "bg1col", "bg2col", "bg3col", "adfree", "pro"];
+                   "bannercol", "bg1col", "bg2col", "bg3col", "pro"];
 
   /* この端末が、見た目を何も選んでいない状態か。
      色も画像も既定のままなら「まだ何も選んでいない」とみなす */
@@ -1112,7 +1125,7 @@
     if (!force && now === recall("looksnap")) return Promise.resolve(null);
     remember("looksnap", now);
     remember("lookAt", String(Date.now()));
-    touched();
+    touched(true);
     return Promise.resolve(null);
   }
 
@@ -1134,8 +1147,11 @@
      「変わったものはありませんでした」で終わり、永久に送られなかった。
      大小ではなく「前に送ったものと違うか」で決める */
   function lookMark() {
-    return JSON.stringify(readPrefs()) + "|" + lookAt() + "|" + faceNow() + "|" + faceAt();
+    return JSON.stringify(readPrefs()) + "|" + lookAt() + "|" + faceNow() + "|" + faceAt()
+      + "|" + (adFree() ? 1 : 0) + "|" + adAt();
   }
+  /* 広告を消した・戻した時刻 */
+  function adAt() { return Number(recall("adAt") || 0); }
 
   /* 届いた設定を、この端末に写す。画像は写真と同じ置き場から
      すでに降りてきているので、名札を頼りに読み直すだけでよい */
@@ -1623,7 +1639,8 @@
     $("adNo").onclick = miniClose;
     $("adTry").onclick = function () {
       remember("adfree", adFree() ? "0" : "1");
-      savePrefs();
+      remember("adAt", String(Date.now()));
+      savePrefs(true);
       miniClose(); paintAd();
       toast(adFree() ? "広告を消しました（確認用）" : "広告を戻しました");
     };
@@ -5692,13 +5709,14 @@
     unsent = !!on;
     remember("unsent", on ? "1" : "");
   }
-  function touched() {
+  function touched(fast) {
     touchAt = Date.now();
     markUnsent(true);
     if (!Shelf.linked() || !autoSyncOn()) return;
-    /* 連打のたびに通信しない。手が止まってから送る */
+    /* 連打のたびに通信しない。手が止まってから送る。
+       見た目・広告・アイコンは1回で終わる操作なので、すぐ送る */
     clearTimeout(touchTimer);
-    touchTimer = setTimeout(function () { maybeSync(); }, 10000);
+    touchTimer = setTimeout(function () { maybeSync(); }, fast ? 2000 : 10000);
   }
 
   var syncRooms = null;   /* 置き場の番号。一度引いたら使い回す */
@@ -5890,7 +5908,7 @@
         face: faceNow(), faceAt: faceAt(),
         /* 広告を消したかどうか。これだけは時刻で competition させない。
            買い物なので、どれか一台で買ってあれば全部で消えるのが筋 */
-        paid: adFree() ? 1 : 0
+        paid: adFree() ? 1 : 0, paidAt: adAt()
       });
       return Shelf.save(place.sync, myIndexName(),
         new Blob([body], { type: "application/json" })).then(function () {
@@ -5957,7 +5975,9 @@
        どちらの端末が偉いということはない。時刻だけで決める */
     var bestAt = lookAt(), bestLook = null, bestDev = devId();
     var faceBest = faceAt(), faceWin = null;
-    var paidThere = false;
+    /* 広告：いちばん最後に消した・戻した端末に合わせる。
+       同じ時刻なら「消してある」ほうを採る（買った人を裏切らない） */
+    var payAt = adAt(), payWin = adFree() ? 1 : 0;
     list.forEach(function (ix) {
       var at = Number(ix.lookAt || 0);
       /* 時刻が同じときは、端末の札で決める。どちらが偉いかではなく、
@@ -5979,7 +5999,8 @@
            こちらが空のまま、すれ違い続けるのを防ぐ */
         faceWin = ix.face;
       }
-      if (Number(ix.paid || 0)) paidThere = true;
+      var pAt = Number(ix.paidAt || 0), pv = Number(ix.paid || 0) ? 1 : 0;
+      if (pAt > payAt || (pAt === payAt && pv && !payWin)) { payAt = pAt; payWin = pv; }
     });
     return myRecords().then(function (here) {
       SYNCED.forEach(function (st) {
@@ -6117,16 +6138,19 @@
         return loadSkin();
       }, function () { return null; });
     }).then(function () {
-      /* 広告を消す買い物は、足し算だけ。どれか一台で買ってあれば、
-         この端末でも消す。消えたり出たりすると、払った人を裏切る */
-      if (paidThere && !adFree()) {
+      /* 広告。向こうのほうが新しければ合わせる */
+      if ((payWin ? 1 : 0) !== (adFree() ? 1 : 0)) {
         out.look = 1;
-        remember("adfree", "1");
+        remember("adfree", payWin ? "1" : "0");
         applyLook(); paintAd();
       }
+      if (payAt > adAt()) remember("adAt", String(payAt));
       /* 写したぶんを控え直す。控えないと、次に見にいったときに
          「この端末で変えた」と見なして、送り返してしまう */
       remember("looksnap", JSON.stringify(readPrefs()));
+      /* 受け取ってそろえただけなら、送り直さない。
+         新しいほうはもう向こうが置いてある */
+      if (out.look) remember("sentMark", lookMark());
       return out;
     });
   }
@@ -6283,9 +6307,9 @@
       /* 裏で5分おきに回っているときは、何か増えたときだけ知らせる。
          自分の記録を置き直しただけで毎回しゃべられると、うるさい */
       var worth = up.sent || down.add || down.upd || down.del || down.got || down.swept || down.look;
-      var nil = mode === "down" ? "ほかの端末に、新しいものはありませんでした"
-              : mode === "up" ? "送るものはありませんでした"
-              : "変わったものはありませんでした";
+      var nil = mode === "down" ? "もう最新です"
+              : mode === "up" ? "もう送ってあります"
+              : "もう最新です";
       var did = mode === "down" ? "取り込みました" : mode === "up" ? "送りました" : "同期しました";
       if (!quietSync) toast(said.length ? (did + "（" + said.join(" ・ ") + "）") : nil);
       else if (worth) toast("同期しました（" + said.join(" ・ ") + "）");
@@ -6449,34 +6473,34 @@
   function listSaves() {
     return Shelf.root().then(function (id) {
       return Shelf.list(id).then(function (rows) {
-        var by = {}, old = [];
+        var by = {};
         (rows || []).forEach(function (r) {
           var m = SAVE_RE.exec(r.name);
-          if (m) { by[Number(m[2])] = r; return; }
-          /* 前のやり方（まるごと保存）で置いたものも、戻せるように出す */
-          if (BUNDLE_RE.test(r.name)) old.push(r);
+          if (m) by[Number(m[2])] = r;
         });
         for (var n = 1; n <= SAVE_SLOTS; n++) {
           var memo = slotRecall(n);
           if (by[n]) {
             /* ドライブで見えた。控えを今のものに置き直す */
-            slotMemo(n, { id: by[n].fileId, at: by[n].at, size: by[n].size });
+            slotMemo(n, { id: by[n].fileId, at: by[n].at, size: by[n].size, note: by[n].note || "" });
           } else if (memo && memo.id) {
             /* まだ一覧に出てこない。控えから出す。
                10分たっても出てこないなら、消されたものとして忘れる */
             if (Date.now() - Number(memo.at || 0) < 10 * 60 * 1000) {
-              by[n] = { fileId: memo.id, name: saveName(n), at: memo.at, size: memo.size };
+              by[n] = { fileId: memo.id, name: saveName(n), at: memo.at, size: memo.size, note: memo.note || "" };
             } else {
               slotMemo(n, null);
             }
           }
         }
-        return { by: by, old: old };
+        return { by: by };
       });
     });
   }
 
-  function saveSlot(n, after) {
+  function slotTitle(n, r) { return (r && r.note) || ("スロット " + n); }
+
+  function saveSlot(n, after, note) {
     var room = null;
     toast("ドライブに接続しています…");
     Shelf.root().then(function (id) {
@@ -6488,8 +6512,11 @@
       return Shelf.save(room, saveName(n), zip).then(function (r) {
         /* 置いた番号を手元に控える。ドライブの一覧が追いつかなくても、
            これで出せるし、ここから戻すこともできる */
-        if (r && r.id) slotMemo(n, { id: r.id, at: Date.now(), size: zip.size });
-        return zip;
+        if (!r || !r.id) return zip;
+        var keep = note != null ? note : ((slotRecall(n) || {}).note || "");
+        slotMemo(n, { id: r.id, at: Date.now(), size: zip.size, note: keep });
+        if (note == null) return zip;
+        return Shelf.describe(r.id, note).then(function () { return zip; }, function () { return zip; });
       });
     }).then(function (zip) {
       progress(100);
@@ -6516,15 +6543,10 @@
       var h = "", n;
       for (n = 1; n <= SAVE_SLOTS; n++) {
         var r = got.by[n];
-        h += '<button class="rowbtn" data-slot="' + n + '"><div><b>スロット ' + n + "</b>"
+        h += '<button class="rowbtn" data-slot="' + n + '"><div><b>' + esc(slotTitle(n, r)) + "</b>"
           + "<span>" + (r ? esc(whenTxt(r.at) + " ・ " + mb(r.size)) : "空") + "</span></div>"
           + '<svg><use href="#i-' + (r ? "out" : "up") + '"/></svg></button>';
       }
-      got.old.forEach(function (r, i) {
-        h += '<button class="rowbtn" data-old="' + i + '"><div><b>以前の保存（' + esc(bundleWho(r.name)) + "）</b>"
-          + "<span>" + esc(whenTxt(r.at) + " ・ " + mb(r.size)) + "</span></div>"
-          + '<svg><use href="#i-out"/></svg></button>';
-      });
       $("svBody").innerHTML = h;
       Array.prototype.forEach.call($("svBody").querySelectorAll("[data-slot]"), function (b) {
         b.onclick = function () {
@@ -6533,9 +6555,6 @@
           if (!r) return askSave(k, null);
           slotMenu(k, r);
         };
-      });
-      Array.prototype.forEach.call($("svBody").querySelectorAll("[data-old]"), function (b) {
-        b.onclick = function () { askLoad(got.old[Number(b.getAttribute("data-old"))], "以前の保存"); };
       });
     }).catch(function (e) {
       if ($("svBody")) $("svBody").innerHTML = '<div class="saveflag" style="color:var(--rec)">' + esc(why(e)) + "</div>";
@@ -6548,14 +6567,34 @@
 
   function askSave(n, r) {
     var size = nowSize();
+    if (!r) {
+      /* 空のスロットは、名前を決めてそのまま保存する */
+      askText({
+        title: "スロット " + n + " に保存",
+        body: size ? "だいたい " + mb(size) : "",
+        value: "スロット " + n,
+        ok: "保存する"
+      }, function (v) {
+        saveSlot(n, function () { paintSaves(); }, v === "スロット " + n ? "" : v);
+      });
+      return;
+    }
     askYesNo({
-      title: "スロット " + n + " に保存",
-      body: "いまのフォルダ・写真・メモを、まるごとひとつにまとめて置きます。"
-        + (size ? "だいたい " + mb(size) + "。" : "")
-        + (r ? "スロット " + n + " の前の保存は消えます。" : ""),
-      ok: "保存する",
-      safe: !r
+      title: "「" + slotTitle(n, r) + "」に上書き保存",
+      body: "前の保存は消えます。" + (size ? "だいたい " + mb(size) + "。" : ""),
+      ok: "上書き保存"
     }, function () { saveSlot(n, function () { paintSaves(); }); });
+  }
+
+  function renameSlot(n, r) {
+    askText({ title: "名前を変える", value: slotTitle(n, r), ok: "決定" }, function (v) {
+      var note = v === "スロット " + n ? "" : v;
+      var memo = slotRecall(n) || {};
+      memo.note = note;
+      slotMemo(n, memo);
+      Shelf.describe(r.fileId, note).then(function () { paintSaves(); },
+        function (e) { toast(why(e), true); paintSaves(); });
+    });
   }
 
   function askLoad(r, title) {
@@ -6568,18 +6607,20 @@
   }
 
   function slotMenu(n, r) {
-    $("minibox").innerHTML = "<h4>スロット " + n + "</h4>"
+    $("minibox").innerHTML = "<h4>" + esc(slotTitle(n, r)) + "</h4>"
       + "<p>" + esc(whenTxt(r.at) + " ・ " + mb(r.size)) + "</p>"
       + '<div class="minibtns" style="flex-wrap:wrap">'
       + '<button class="ghost" id="svNo">やめる</button>'
+      + '<button class="ghost" id="svName">名前を変える</button>'
       + '<button class="ghost" id="svOver">上書き保存</button>'
       + '<button class="cta" id="svLoad" style="background:var(--ink);color:#fff">ここに戻す</button>'
       + "</div>";
     noAutofill($("minibox"));
     $("mini").className = "mini on";
     $("svNo").onclick = miniClose;
+    $("svName").onclick = function () { miniClose(); renameSlot(n, r); };
     $("svOver").onclick = function () { miniClose(); askSave(n, r); };
-    $("svLoad").onclick = function () { miniClose(); askLoad(r, "スロット " + n); };
+    $("svLoad").onclick = function () { miniClose(); askLoad(r, "「" + slotTitle(n, r) + "」"); };
   }
 
   var syncWatch = null;
@@ -6588,11 +6629,14 @@
       var on = Shelf.linked();
       var body = on
         ? '<div class="meblock">'
-            + '<button class="mebig' + (SKIN.me ? " pic" : "") + '" id="tmFace"'
+            /* button ではなく label にする。JS から選ぶ窓を開くやり方は、
+               パソコンのブラウザによっては黙って無視される。
+               label なら、ブラウザ自身が窓を開くので確実 */
+            + '<label class="mebig' + (SKIN.me ? " pic" : "") + '" id="tmFace" for="skinIn" role="button"'
             + ' aria-label="アイコンの絵を選ぶ"'
             + (SKIN.me ? " style=\"background-image:url('" + SKIN.me + "')\"" : "") + ">"
             + (SKIN.me ? "" : esc(meLetter()))
-            + '<span class="meplus"><svg><use href="#i-plus"/></svg></span></button>'
+            + '<span class="meplus"><svg><use href="#i-plus"/></svg></span></label>'
             + '<div class="mewho"><b>ログイン中</b><span>'
             + (Shelf.who() ? esc(Shelf.who()) : "このGoogleアカウント") + "</span></div>"
           + "</div>"
@@ -6662,7 +6706,8 @@
       };
 
       var fc = $("tmFace");
-      if (fc) fc.onclick = function () { pickSkin("me"); };
+      /* 窓はブラウザが開く（label）。ここでは「どこに入れるか」だけ決める */
+      if (fc) fc.onclick = function () { skinSlot = "me"; fileWait(); };
       var fo = $("tmFaceOff");
       if (fo) fo.onclick = function () { clearSkin("me"); };
 
@@ -6803,8 +6848,27 @@
       + '<div class="qabody">' + body + "</div></details>";
   }
 
+  /* 問い合わせ先。決まったら入れる。空のあいだは押しても準備中と出す */
+  var SUPPORT_MAIL = "";
+
   function helpSheet() {
-    sheet('<div class="panel-head"><h3>使い方・困ったとき</h3>'
+    sheet('<div class="panel-head"><h3>ヘルプ</h3>'
+      + '<button class="iconbtn" id="hmClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + '<button class="rowbtn" id="hmFaq"><div><b>よくある質問</b></div><svg><use href="#i-help"/></svg></button>'
+      + '<button class="rowbtn" id="hmMail"><div><b>メールで問い合わせ</b></div><svg><use href="#i-share"/></svg></button>'
+      + "</div></div>", "dialog");
+    $("hmClose").onclick = closeSheet;
+    $("hmFaq").onclick = faqSheet;
+    $("hmMail").onclick = function () {
+      if (!SUPPORT_MAIL) { toast("問い合わせ先は準備中です"); return; }
+      var sub = encodeURIComponent("フォルポについて（v" + APPVER + "）");
+      location.href = "mailto:" + SUPPORT_MAIL + "?subject=" + sub;
+    };
+  }
+
+  function faqSheet() {
+    sheet('<div class="panel-head"><h3>よくある質問</h3>'
       + '<button class="iconbtn" id="hpClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
 
@@ -6904,12 +6968,6 @@
       + "<span>" + esc(photoSize().name) + "・長辺" + photoSize().edge + "px"
       + (asksSize() ? "。取り込むたびにきく" : "。取り込むときはきかない") + "</span></div><svg><use href=\"#i-cam\"/></svg></button>"
       + '<button class="rowbtn" id="sLook"><div><b>見た目を整える</b><span>配色・明るさ・書体・余白・角の丸み・列数</span></div><svg><use href="#i-paint"/></svg></button>'
-      + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
-      + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
-      + '<svg><use href="#i-star"/></svg></button>'
-      + '<button class="rowbtn" id="sHelp"><div><b>使い方・困ったとき</b>'
-      + "<span>はじめかたから、同期・セーブデータ・うまくいかないときまで</span></div>"
-      + '<svg><use href="#i-help"/></svg></button>'
       + installRow()
       + '<div class="field"><div class="label">端末の使用量</div>'
       + '<div class="gauge"><div class="gaugebar"><i id="gBar" style="width:0%"></i></div>'
@@ -6917,10 +6975,16 @@
       + '<button class="rowbtn" id="sBackup"><div><b>まるごとバックアップ</b>'
       + "<span>すべてのフォルダ・写真・メモを1つのZIPにして書き出します。機種変更のときはこれ。</span></div>"
       + '<svg><use href="#i-out"/></svg></button>'
-      + '<button class="rowbtn" id="sRestore"><div><b>バックアップ／共有されたZIPを読み込む</b>'
+      + '<label class="rowbtn" id="sRestore" for="restoreIn" role="button" style="cursor:pointer"><div><b>バックアップ／共有されたZIPを読み込む</b>'
       + "<span>まるごとのZIPでも、1フォルダ分のZIPでも。いまのデータに足されます。</span></div>"
-      + '<svg><use href="#i-plus"/></svg></button>'
+      + '<svg><use href="#i-plus"/></svg></label>'
       + '<input id="restoreIn" class="offscreen" type="file" accept=".zip,application/zip">'
+      + '<button class="rowbtn" id="sAd"><div><b>広告を消す</b>'
+      + "<span>" + (adFree() ? "いまは消えています" : "買い切り。毎月の支払いはありません") + "</span></div>"
+      + '<svg><use href="#i-star"/></svg></button>'
+      + '<button class="rowbtn" id="sHelp"><div><b>ヘルプ</b>'
+      + "<span>よくある質問・問い合わせ</span></div>"
+      + '<svg><use href="#i-help"/></svg></button>'
       + '</div></div>'
       + '<div class="panel-foot"><span class="label">データはこの端末の中だけにあります</span></div>', "dialog");
 
@@ -6959,7 +7023,7 @@
     };
     $("sSize").onclick = function () { closeSheet(); sizeSheet(); };
     $("sBackup").onclick = backup;
-    $("sRestore").onclick = function () { fileWait(); $("restoreIn").click(); };
+    $("sRestore").onclick = function () { fileWait(); };
     $("restoreIn").onchange = function () {
       var f = this.files && this.files[0];
       this.value = "";

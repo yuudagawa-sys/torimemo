@@ -1399,6 +1399,7 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 }
 /* 絵を入れたときは、頭文字も地の色も出さない */
 .mebig.pic{background-color:transparent; color:transparent}
+label.mebig{cursor:pointer}
 .mebig svg{width:30px; height:30px}
 .meplus{
   position:absolute; right:-2px; bottom:-2px;
