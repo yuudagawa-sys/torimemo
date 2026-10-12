@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "90";
+  var APPVER = "91";
 
   /* ============================================================
      小道具
@@ -71,7 +71,8 @@
     /* 黙って合鍵を取り直せなかったときの合図。中の言葉なので、
        そのまま出すと「quiet」とだけ表示されてしまう */
     if (m === "quiet") {
-      return "Googleとつながりませんでした。" + meWhere() + "から、もう一度ログインしてください。";
+      return "Googleとつながりませんでした。この画面をひと触りすると、つなぎ直します。"
+        + "それでも続くときは、" + meWhere() + "から、もう一度ログインしてください。";
     }
     if (e.name && e.name !== "Error" && m.indexOf(e.name) < 0) m += "（" + e.name + "）";
     return m;
@@ -505,6 +506,11 @@
           win(gTok);
         };
         timer = setTimeout(function () {
+          /* 待っている間に、別の頼みで合鍵が取れていることがある。
+             （画面を触ったときの取り直し＝topUp がそれ）
+             それなら、ここは転ばずにその合鍵をそのまま返す。
+             転ばせてしまうと、せっかく取れたのに同期が死ぬ */
+          if (gTok && Date.now() < gTokUntil) return win(gTok);
           if (quiet) gQuietDead = Date.now();
           lose(new Error(quiet ? "quiet"
             : "Googleから返事がありませんでした。通信を確かめて、もう一度お試しください。"));
@@ -641,12 +647,17 @@
          名前を変えた日に同期先を見失って、まっさらから始まってしまう。
          名前ごとに1回ずつ引く。1本のまとめ書きにすると、
          問い合わせの書き方しだいで取りこぼすことがある */
+      /* ここで転んだぶんを飲み込んではいけない。
+         「探したが無かった」と「探せなかった」は別のことで、
+         取り違えると、置き場があるのに新しく作ってしまう。
+         合鍵が取れなかっただけで二つめのフォルダが生まれ、
+         端末ごとに別の場所へ溜まる——という事故の元になっていた */
       function byName(nm) {
         var q = encodeURIComponent(
           "mimeType='application/vnd.google-apps.folder' and name='" + nm + "' and trashed=false");
         var f = encodeURIComponent("files(id,name,createdTime)");
         return gCall(DRIVE + "?q=" + q + "&fields=" + f + "&orderBy=createdTime&pageSize=100")
-          .then(function (r) { return r.files || []; }, function () { return []; });
+          .then(function (r) { return r.files || []; });
       }
       return Promise.all([byName(ROOT_NAME), byName(OLD_ROOT)]).then(function (two) {
         var all = two[0].concat(two[1]);
@@ -703,7 +714,9 @@
           throw new Error("消えています");
         }).catch(function () { remember("driveRoot", ""); return born(); });
       }, function (e) {
-        /* 一覧が引けないだけなら、控えで続ける */
+        /* 一覧が引けないだけなら、控えで続ける。
+           控えも無いなら、ここで新しく作ってはいけない。
+           あとで引けたときに、ちゃんと向こうの置き場が見つかる */
         if (had) return had;
         throw e;
       });
@@ -1300,6 +1313,11 @@
        窓が前に出たことを別の合図として拾っておく */
     window.addEventListener("focus", function () { setTimeout(maybeSync, 600); });
     window.addEventListener("pageshow", function () { setTimeout(maybeSync, 600); });
+    /* 合鍵の取り直しは、人が触った直後にしかできない。
+       どこを触っても拾えるように、捕まえる側で聞いておく */
+    ["pointerup", "keyup"].forEach(function (k) {
+      document.addEventListener(k, topUp, true);
+    });
     /* 窓を閉じる前に、送り残しがあるなら印だけでも残す */
     window.addEventListener("pagehide", function () {
       if (unsent) remember("unsent", "1");
@@ -6131,9 +6149,16 @@
          送り残しがあると間合いの決まりが外れるので、
          ここで押さえないと、だめな通信を何度も繰り返してしまう */
       failAt = Date.now();
+      /* 黙って走っているときに合鍵が取れなかっただけなら、騒がない。
+         ホーム画面のアプリ（とくにiPhone）では、人が触っていない間は
+         Googleの窓を開けさせてもらえない。次に画面を触ったときに
+         取り直して続ける（topUp）ので、放っておけば直る。
+         ただし半日つながっていないなら、それは伝えたほうがいい */
+      var mute = quietSync && (e && e.message) === "quiet"
+        && Date.now() - Number(recall("syncAt") || 0) < 12 * 60 * 60 * 1000;
       syncing = false; quietSync = false; syncStep = "";
       busyMark();
-      toast(why(e), true);
+      if (!mute) toast(why(e), true);
     }
     try {
     sendChanges().then(function (a) {
@@ -6204,6 +6229,66 @@
     syncNow(null, true);
   }
 
+  /* 人が触ったついでに、合鍵を取り直しておく。
+     ホーム画面のアプリ（とくにiPhone）では、人が触っていない間は
+     Googleの窓を開けさせてもらえない。時計や「戻ってきたとき」から
+     走った同期が「つながりませんでした」で終わるのは、たいていこれが理由。
+     触ったその直後なら許されるので、そこで静かに済ませてしまう。
+     指を離したとき（pointerup）に拾う。押した瞬間だと、
+     長押しで並べ替えている最中に窓が開いて、その手が中断されてしまう */
+  var TOPUP_LEAD = 10 * 60 * 1000;    /* 切れる10分前から取り直す */
+  var topupAt = 0, topupDead = 0;
+  function topUp() {
+    if (!Shelf.linked() || !autoSyncOn()) return;
+    /* 連打のたびにGoogleへ頼まない */
+    if (Date.now() - topupAt < 30 * 1000) return;
+    /* 触っても取れなかったときは、しばらく触らない。
+       そうしないと、ログインが切れている間、触るたびに窓が開きかける */
+    if (Date.now() - topupDead < 5 * 60 * 1000) return;
+    /* まだ十分もつ合鍵があるなら、何もしない */
+    if (gTok && Date.now() < gTokUntil - TOPUP_LEAD) return;
+    /* 人に許可画面を出している最中なら、邪魔をしない */
+    if (gWait.ask) return;
+    topupAt = Date.now();
+    /* 前に頼んだぶんが宙ぶらりんなら、それは窓が開かなかったもの。
+       待っていても返事は来ないので、乗らずに新しく頼み直す。
+       ここで待ち合わせてしまうと、せっかく触ってもらった
+       いちばん大事な一回を取りこぼす */
+    var p = gKeyNow(true);
+    gWait.quiet = p;
+    function clear() { if (gWait.quiet === p) gWait.quiet = null; }
+    p.then(clear, clear);
+    p.then(function () {
+      /* 取れた。止まっていたぶんを、ここで進める。
+         いま走っている同期は、合鍵待ちで止まっていたはず。
+         それが動き出すか、転んで終わるかを見てから、やり直す */
+      topupDead = 0; failAt = 0; gQuietDead = 0;
+      afterSync(function () { failAt = 0; maybeSync(true); });
+    }, function () { topupDead = Date.now(); });
+  }
+
+  /* いま走っている同期が終わるのを待って、続きをやる。
+     走っている最中に呼んでも maybeSync は帰ってしまうので、
+     ここを通さないと、触って立て直したぶんが取りこぼされる */
+  function afterSync(run) {
+    var n = 0;
+    (function look() {
+      if (!syncing) return run();
+      if (++n > 90) return;            /* 1分半見て駄目なら、あきらめる */
+      setTimeout(look, 1000);
+    })();
+  }
+
+  /* しばらくつながっていないときの一言。原因はたいてい合鍵で、
+     画面を触れば取り直せる。黙って古いままにしておくと、
+     同期しているつもりで使ってしまう */
+  function syncLateSay() {
+    if (!Shelf.linked()) return "";
+    var at = Number(recall("syncAt") || 0);
+    if (!at || Date.now() - at < 2 * 60 * 60 * 1000) return "";
+    return "しばらくつながっていません。この画面をひと触りすると、つなぎ直します。";
+  }
+
   /* ドライブにあるものの一覧 */
   function listBundles() {
     return Shelf.root().then(function (id) {
@@ -6255,7 +6340,7 @@
           + '<button class="rowbtn' + (syncing ? " working" : "") + '" id="tmSync"><div><b>いますぐ同期</b>'
           + '<span id="tmSyncSay">' + (syncing
               ? esc(syncStep || "いま同期しています…")
-              : (unsent ? "まだ送っていないものがあります。" : "")
+              : syncLateSay() + (unsent ? "まだ送っていないものがあります。" : "")
                 + "変わったものを送り、ほかの端末の変わりを受け取ります。"
                 + "写真は一度送れば二度は送りません。"
                 + "最後に同期したのは " + whenTxt(recall("syncAt"))) + "</span></div>"
@@ -6345,7 +6430,7 @@
           return;
         }
         if (row) row.classList.remove("working");
-        e.textContent = (unsent ? "まだ送っていないものがあります。" : "")
+        e.textContent = syncLateSay() + (unsent ? "まだ送っていないものがあります。" : "")
           + "変わったものを送り、ほかの端末の変わりを受け取ります。"
           + "写真は一度送れば二度は送りません。"
           + "最後に同期したのは " + whenTxt(recall("syncAt"));
