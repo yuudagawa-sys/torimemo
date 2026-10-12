@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "95";
+  var APPVER = "96";
 
   /* ============================================================
      小道具
@@ -6434,6 +6434,18 @@
   function saveName(n) { return ROOT_NAME + "_セーブ" + n + ".zip"; }
   var SAVE_RE = new RegExp("^(" + ROOT_NAME + "|" + OLD_ROOT + ")_セーブ([1-9])\\.zip$");
 
+  /* 保存したことを手元にも控える。
+     ドライブの一覧は、置いた直後だと返ってこないことがある。
+     「保存しました」と出たのにスロットが空のまま、という
+     気持ちの悪い見え方を防ぐため、こちらの控えも合わせて出す */
+  function slotMemo(n, o) {
+    if (o) remember("slot" + n, JSON.stringify(o));
+    else remember("slot" + n, "");
+  }
+  function slotRecall(n) {
+    try { return JSON.parse(recall("slot" + n) || "null"); } catch (e) { return null; }
+  }
+
   function listSaves() {
     return Shelf.root().then(function (id) {
       return Shelf.list(id).then(function (rows) {
@@ -6444,6 +6456,21 @@
           /* 前のやり方（まるごと保存）で置いたものも、戻せるように出す */
           if (BUNDLE_RE.test(r.name)) old.push(r);
         });
+        for (var n = 1; n <= SAVE_SLOTS; n++) {
+          var memo = slotRecall(n);
+          if (by[n]) {
+            /* ドライブで見えた。控えを今のものに置き直す */
+            slotMemo(n, { id: by[n].fileId, at: by[n].at, size: by[n].size });
+          } else if (memo && memo.id) {
+            /* まだ一覧に出てこない。控えから出す。
+               10分たっても出てこないなら、消されたものとして忘れる */
+            if (Date.now() - Number(memo.at || 0) < 10 * 60 * 1000) {
+              by[n] = { fileId: memo.id, name: saveName(n), at: memo.at, size: memo.size };
+            } else {
+              slotMemo(n, null);
+            }
+          }
+        }
         return { by: by, old: old };
       });
     });
@@ -6458,7 +6485,12 @@
     }).then(function (zip) {
       progress(92);
       toast("保存しています…（" + mb(zip.size) + "）");
-      return Shelf.save(room, saveName(n), zip).then(function () { return zip; });
+      return Shelf.save(room, saveName(n), zip).then(function (r) {
+        /* 置いた番号を手元に控える。ドライブの一覧が追いつかなくても、
+           これで出せるし、ここから戻すこともできる */
+        if (r && r.id) slotMemo(n, { id: r.id, at: Date.now(), size: zip.size });
+        return zip;
+      });
     }).then(function (zip) {
       progress(100);
       remember("pushedAt", String(Date.now()));
@@ -6888,7 +6920,7 @@
       + '<button class="rowbtn" id="sRestore"><div><b>バックアップ／共有されたZIPを読み込む</b>'
       + "<span>まるごとのZIPでも、1フォルダ分のZIPでも。いまのデータに足されます。</span></div>"
       + '<svg><use href="#i-plus"/></svg></button>'
-      + '<input id="restoreIn" type="file" accept=".zip,application/zip" hidden>'
+      + '<input id="restoreIn" class="offscreen" type="file" accept=".zip,application/zip">'
       + '</div></div>'
       + '<div class="panel-foot"><span class="label">データはこの端末の中だけにあります</span></div>', "dialog");
 

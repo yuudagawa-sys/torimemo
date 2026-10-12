@@ -1381,6 +1381,14 @@ body{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 .linked{display:grid; gap:2px; padding:2px 0}
 /* アカウントの顔。大きい丸と、右下の＋で絵を入れ替える */
 .meblock{display:flex; align-items:center; gap:14px; padding:2px 0 4px}
+/* ファイルを選ぶための入れもの。目には見せないが、画面からは消さない。
+   display:none（hidden）にすると、ブラウザによっては押しても
+   選ぶ窓が開かない。パソコンのアプリでアイコンの絵を選べなかったのは、これ */
+.offscreen{
+  position:fixed; left:-9999px; top:0;
+  width:1px; height:1px; opacity:0; pointer-events:none;
+}
+
 .mebig{
   position:relative; flex:0 0 auto; padding:0;
   width:72px; height:72px; border-radius:999px;
