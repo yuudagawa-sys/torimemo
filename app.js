@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "100";
+  var APPVER = "101";
 
   /* ============================================================
      小道具
@@ -1318,7 +1318,177 @@
     tplHidden = (pref && pref.hidden) || [];
   }
 
+  /* ============================================================
+     鍵（アプリの玄関）
+     ------------------------------------------------------------
+     Face ID / Touch ID を使い、だめなら端末のパスコードで開く。
+     アプリの画面だけを隠す鍵。写真は端末の中にあり、
+     端末そのものを守っているのは iPhone のロック。
+     鍵の入り切りは、ホーム（棚）の空いたところを長押しして行う。
+     ============================================================ */
+  var LOCK_AWAY = 5 * 60 * 1000;   /* 別の所へ5分以上いたら、戻ったとき鍵をかける */
+  var lockAway = 0, lockMiss = 0;
+
+  function lockOn() { return recall("lock") === "1" && !!recall("lockId"); }
+  function bytesOf(n) { var a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
+  function toB64(buf) {
+    var b = new Uint8Array(buf), s = "";
+    for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s);
+  }
+  function fromB64(str) {
+    var bin = atob(str || ""), a = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+
+  /* 端末の鍵を作る。Face ID / Touch ID（だめなら端末のパスコード）で確かめてから作る */
+  function lockEnroll() {
+    return navigator.credentials.create({ publicKey: {
+      challenge: bytesOf(32),
+      rp: { name: "フォルポ" },
+      user: { id: bytesOf(16), name: "folpo", displayName: "フォルポ" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+      timeout: 60000
+    } }).then(function (c) {
+      remember("lockId", toB64(c.rawId));
+      remember("lock", "1");
+    });
+  }
+  /* 鍵を確かめる。通ればよい（返事の中身は使わない。端末の中だけの鍵だから） */
+  function lockCheck() {
+    return navigator.credentials.get({ publicKey: {
+      challenge: bytesOf(32),
+      allowCredentials: [{ type: "public-key", id: fromB64(recall("lockId")) }],
+      userVerification: "required",
+      timeout: 60000
+    } });
+  }
+  function lockCan() {
+    if (!window.PublicKeyCredential || !navigator.credentials || !PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return Promise.resolve(false);
+    return PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(function () { return false; });
+  }
+
+  function lockOff() {
+    remember("lock", ""); remember("lockId", "");
+    hideLock();
+  }
+
+  function showLock(msg) {
+    var el = $("lockScr");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "lockScr"; el.className = "lockscr";
+      document.body.appendChild(el);
+    }
+    el.innerHTML = '<div class="lockbox">'
+      + '<div class="lockmark">FOLPO</div>'
+      + '<p class="lockmsg" id="lkMsg">' + esc(msg || "鍵がかかっています") + "</p>"
+      + '<button class="cta" id="lkGo">開く</button>'
+      + '<div id="lkMore"></div>'
+      + "</div>";
+    el.style.display = "flex";
+    $("lkGo").onclick = tryUnlock;
+    if (lockMiss >= 2) lockMore();
+  }
+  function hideLock() {
+    var el = $("lockScr");
+    if (el) el.style.display = "none";
+    lockMiss = 0;
+  }
+
+  function tryUnlock() {
+    lockCheck().then(function () {
+      hideLock();
+    }, function () {
+      lockMiss++;
+      var m = $("lkMsg");
+      if (m) m.textContent = "開けませんでした。もう一度押してください。";
+      if (lockMiss >= 2) lockMore();
+    });
+  }
+
+  /* 何度開けなくても、鍵をなくしたときの出口。
+     Googleのログインでほんとうの持ち主だと確かめられれば、鍵を作り直して開く。
+     Googleにつながっていない端末は、アプリを消して入れ直すしかない */
+  function lockMore() {
+    var box = $("lkMore");
+    if (!box) return;
+    box.innerHTML = '<button class="ghost" id="lkG" style="width:100%;margin-top:10px">Googleでログインして開く</button>'
+      + '<p class="lockmsg" style="font-size:12px">Googleにつながっていなければ、アプリを消して入れ直すしかありません。端末の中のデータは消えます（送っていないものも）。</p>';
+    $("lkG").onclick = function () {
+      Shelf.link().then(function () {
+        return lockEnroll();
+      }).then(function () {
+        hideLock();
+        toast("鍵を作り直して、開きました");
+      }).catch(function (e) { toast(why(e), true); });
+    };
+  }
+
+  /* ホーム（棚）の空いたところを長く押すと、鍵の入り切りを出す */
+  function lockSheet() {
+    var on = lockOn();
+    sheet('<div class="panel-head"><h3>鍵</h3>'
+      + '<button class="iconbtn" id="lkX" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body"><div class="stack">'
+      + '<button class="rowbtn" id="lkToggle"><div><b>' + (on ? "鍵をはずす" : "鍵をかける") + "</b></div>"
+      + '<svg><use href="#i-' + (on ? 'out' : 'star') + '"/></svg></button>'
+      + "</div></div>", "dialog");
+    $("lkX").onclick = closeSheet;
+    $("lkToggle").onclick = function () {
+      if (on) {
+        /* はずすときも、いま確かめる。ほかの人に外されないように */
+        lockCheck().then(function () {
+          lockOff();
+          closeSheet();
+          toast("鍵をはずしました");
+        }, function () { toast("開けませんでした。鍵はかかったままです。", true); });
+      } else {
+        lockCan().then(function (ok) {
+          if (!ok) { toast("この端末では、鍵を使えません。", true); return; }
+          return lockEnroll().then(function () {
+            closeSheet();
+            toast("鍵をかけました");
+          });
+        }).catch(function (e) { toast("鍵をかけられませんでした。" + why(e), true); });
+      }
+    };
+  }
+
+  /* 鍵の仕掛け（起動のとき一度だけ） */
+  function lockInit() {
+    if (lockOn()) showLock();
+    /* 別の所へ5分以上いたら、戻ったときに鍵をかける */
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { lockAway = Date.now(); return; }
+      if (lockOn() && lockAway && Date.now() - lockAway >= LOCK_AWAY) showLock();
+      lockAway = 0;
+    });
+    /* ホームの空いたところを長押し */
+    var lpTimer = null, lpAt = null;
+    var SKIP = "button,a,input,textarea,select,label,[data-folder],[data-board],[data-open],[data-more],[data-t],[data-c],[data-tagall],[data-stag],[data-hit],.frame,.fsqwrap,.frowwrap,.tabbar,.dock,.sheet,.panel,.mini,.scrim,.lockscr";
+    document.addEventListener("pointerdown", function (ev) {
+      if (screen !== "shelf" || ev.button > 0 || lockUp()) return;
+      if (ev.target.closest && ev.target.closest(SKIP)) return;
+      lpAt = { x: ev.clientX, y: ev.clientY };
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(function () { lpTimer = null; lockSheet(); }, 700);
+    }, true);
+    document.addEventListener("pointermove", function (ev) {
+      if (lpTimer && lpAt && Math.abs(ev.clientX - lpAt.x) + Math.abs(ev.clientY - lpAt.y) > 10) {
+        clearTimeout(lpTimer); lpTimer = null;
+      }
+    }, true);
+    ["pointerup", "pointercancel"].forEach(function (k) {
+      document.addEventListener(k, function () { clearTimeout(lpTimer); lpTimer = null; }, true);
+    });
+  }
+  function lockUp() { var el = $("lockScr"); return !!(el && el.style.display === "flex"); }
+
   function boot() {
+    lockInit();
     applyLook();
     viewMode = recall("view") === "feed" ? "feed" : "grid";
     if (recall("shelfview") === "list") shelfView = "list";

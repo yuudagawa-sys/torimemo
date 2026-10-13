@@ -2261,3 +2261,16 @@ label.mebig{cursor:pointer}
 @media (min-width:880px) and (max-width:999px){
   main, .top-in, .rail, .seek, .tabbar, .adslot{ max-width:880px; }
 }
+
+/* 鍵（アプリの玄関）。入ると、ほかの画面は見えない */
+.lockscr{
+  position:fixed; inset:0; z-index:9999; display:none;
+  align-items:center; justify-content:center;
+  background:var(--paper); padding:24px;
+  padding-top:calc(24px + env(safe-area-inset-top));
+  padding-bottom:calc(24px + env(safe-area-inset-bottom));
+}
+.lockbox{width:100%; max-width:340px; text-align:center}
+.lockmark{font-family:var(--ui); font-size:22px; font-weight:700; letter-spacing:.2em; color:var(--ink); margin-bottom:28px}
+.lockmsg{font-size:14px; color:var(--ink2); line-height:1.7; margin:0 0 16px}
+.lockbox .cta{width:100%}
