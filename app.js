@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "101";
+  var APPVER = "102";
 
   /* ============================================================
      小道具
@@ -1326,10 +1326,13 @@
      端末そのものを守っているのは iPhone のロック。
      鍵の入り切りは、ホーム（棚）の空いたところを長押しして行う。
      ============================================================ */
+  /* いまは止めてある。アプリとして出したあとのアップデートで出す。
+     true に戻せば、鍵の入り切り・開くときの確認がそのまま働く */
+  var LOCK_NOW = false;
   var LOCK_AWAY = 5 * 60 * 1000;   /* 別の所へ5分以上いたら、戻ったとき鍵をかける */
   var lockAway = 0, lockMiss = 0;
 
-  function lockOn() { return recall("lock") === "1" && !!recall("lockId"); }
+  function lockOn() { return LOCK_NOW && recall("lock") === "1" && !!recall("lockId"); }
   function bytesOf(n) { var a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
   function toB64(buf) {
     var b = new Uint8Array(buf), s = "";
@@ -1470,7 +1473,7 @@
     var lpTimer = null, lpAt = null;
     var SKIP = "button,a,input,textarea,select,label,[data-folder],[data-board],[data-open],[data-more],[data-t],[data-c],[data-tagall],[data-stag],[data-hit],.frame,.fsqwrap,.frowwrap,.tabbar,.dock,.sheet,.panel,.mini,.scrim,.lockscr";
     document.addEventListener("pointerdown", function (ev) {
-      if (screen !== "shelf" || ev.button > 0 || lockUp()) return;
+      if (!LOCK_NOW || screen !== "shelf" || ev.button > 0 || lockUp()) return;
       if (ev.target.closest && ev.target.closest(SKIP)) return;
       lpAt = { x: ev.clientX, y: ev.clientY };
       clearTimeout(lpTimer);
