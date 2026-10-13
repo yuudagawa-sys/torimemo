@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "99";
+  var APPVER = "100";
 
   /* ============================================================
      小道具
@@ -6235,6 +6235,70 @@
     });
   }
 
+  /* ============================================================
+     端末の台数（一つのアカウントは3台まで）
+     ------------------------------------------------------------
+     Drive に「端末の一覧.json」を1つ置く。各端末は同期のたびに
+     自分の最終時刻を書く。4台目が現れたら、いちばん長く
+     使われていない端末を外す。外された端末は、次に同期したとき
+     ログアウトする。60日つながっていない端末は、一覧から消える。
+     ※ アプリの中の上限であって、Googleのドライブを直接開けば
+       中身は見える。強く止めるにはサーバーが要る。
+     ============================================================ */
+  var DEVICE_MAX = 3, DEVICE_FILE = "端末の一覧.json";
+  var DEVICE_STALE = 60 * 24 * 60 * 60 * 1000;
+  var KICKED = "kicked";
+
+  /* joining を立てると、いまログインしたばかりの端末として扱う。
+     外されていた端末でも、もう一度ログインすれば戻れる。
+     一覧が読めないとき（圏外など）は、止めずに通す */
+  function deviceCheck(joining) {
+    if (!Shelf.linked()) return Promise.resolve(false);
+    var me = devId(), now = Date.now();
+    var root = null, doc = { list: [], out: [] };
+    return Shelf.root().then(function (id) {
+      root = id;
+      return Shelf.find(root, DEVICE_FILE);
+    }).then(function (f) {
+      if (!f) return null;
+      return Shelf.get(f.id).then(function (b) { return b.text(); }).then(function (t) {
+        try { return JSON.parse(t); } catch (e) { return null; }
+      });
+    }).then(function (got) {
+      if (got) doc = { list: got.list || [], out: got.out || [] };
+      if (!joining && doc.out.indexOf(me) >= 0) return KICKED;
+      var out = doc.out.filter(function (d) { return d !== me; });
+      var before = JSON.stringify(doc.out);
+      var others = doc.list.filter(function (x) {
+        return x.dev !== me && now - Number(x.seen || 0) < DEVICE_STALE;
+      }).sort(function (a, b) { return Number(b.seen || 0) - Number(a.seen || 0); });
+      /* 新しいほうから DEVICE_MAX-1 台を残す。残りは外す */
+      others.slice(DEVICE_MAX - 1).forEach(function (x) {
+        if (out.indexOf(x.dev) < 0) out.push(x.dev);
+      });
+      var moved = JSON.stringify(out) !== before;
+      /* 毎回書くと通信が増えるので、外した・入った・1時間たった、のときだけ書く */
+      if (!joining && !moved && now - Number(recall("devSeen") || 0) < 60 * 60 * 1000) return false;
+      var list = [{ dev: me, name: deviceName(), seen: now }].concat(others.slice(0, DEVICE_MAX - 1));
+      var next = JSON.stringify({ v: 1, list: list, out: out.slice(-10) });
+      return Shelf.save(root, DEVICE_FILE, new Blob([next], { type: "application/json" })).then(function () {
+        remember("devSeen", String(now));
+        return false;
+      });
+    }).catch(function () { return false; });
+  }
+
+  /* 台数の上限で外された。ログアウトして、知らせる */
+  function kickedOut() {
+    syncing = false; quietSync = false; syncStep = "";
+    progress(100); busyMark();
+    Shelf.unlink().then(function () {
+      if ($("tmSay")) closeSheet();
+      paintMe();
+      toast("3台までのため、この端末はログアウトしました。", true);
+    });
+  }
+
   /* 送ってから受け取る。順番が逆だと、こちらの新しい分が
      向こうの古い記録で上書きされたように見えてしまう。
      終わったあとの知らせは、送りと受けをまとめて1つにする。
@@ -6269,6 +6333,7 @@
     busyMark();
     var up = null;
     function fell(e) {
+      if (e && e.message === KICKED) { kickedOut(); return; }
       progress(100);
       /* しくじった直後に、また走り出さない。
          送り残しがあると間合いの決まりが外れるので、
@@ -6297,7 +6362,10 @@
     }
     var NONE = { none: true, add: 0, upd: 0, del: 0, got: 0, miss: 0, swept: 0 };
     try {
-    (mode === "down" ? Promise.resolve({ same: true, sent: 0 }) : sendChanges()).then(function (a) {
+    deviceCheck(false).then(function (k) {
+      if (k === KICKED) throw new Error(KICKED);
+      return mode === "down" ? Promise.resolve({ same: true, sent: 0 }) : sendChanges();
+    }).then(function (a) {
       up = a;
       return mode === "up" ? NONE : takeChanges();
     }).then(function (down) {
@@ -6726,6 +6794,8 @@
       if (on1) on1.onclick = function () {
         say("Googleの画面を開いています…");
         Shelf.link().then(function () {
+          return deviceCheck(true);
+        }).then(function () {
           toast("ログインしました");
           paintMe();
           paintTeam();
