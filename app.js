@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "102";
+  var APPVER = "103";
 
   /* ============================================================
      小道具
@@ -1119,7 +1119,7 @@
   function readPrefs() {
     var o = { id: "look", skins: [] };
     PREF_KEYS.forEach(function (k) { o[k] = recall(k) || ""; });
-    SKIN_KEYS.forEach(function (k) { if (SKIN[k]) o.skins.push("skin_" + k); });
+    SKIN_KEYS.forEach(function (k) { if (SKIN[k]) o.skins.push(skinName(k)); });
     return o;
   }
 
@@ -1146,7 +1146,24 @@
      絵は「この端末の見た目」ではなく「このアカウントの顔」なので、
      一つずつ、最後に変えたものに寄せる */
   function faceAt() { return Number(recall("faceAt") || 0); }
-  function faceNow() { return SKIN.me ? "skin_me" : ""; }
+  function faceNow() { return SKIN.me ? skinName("me") : ""; }
+
+  /* 見た目の画像を、ドライブに置くときの名前。
+     いつも同じ名前（skin_me）で置いていたせいで、2回目に絵を変えても
+     「もう置いてある」と見なされ、新しい絵が送られなかった。
+     受け取る側も「もう持っている」と見なして取りにいかなかった。
+     入れ替えるたびに番号（いつ入れたか）を付けて、別の名前で置く。
+     端末の中では、これまで通り skin_me の名前で持つ */
+  function skinVer(k) { return recall("skinv_" + k) || ""; }
+  function skinName(k) { var v = skinVer(k); return "skin_" + k + (v ? "~" + v : ""); }
+  function isSkin(id) { return String(id).indexOf("skin_") === 0; }
+  function skinLocal(id) { return String(id).split("~")[0]; }
+  function skinVerOf(id) { var i = String(id).indexOf("~"); return i < 0 ? "" : String(id).slice(i + 1); }
+  /* 見た目の勝ち負けで取り寄せる画像。丸の絵（me）は別勘定なので入れない。
+     入れてしまうと、古い見た目に付いていた古い丸の絵で上書きされる */
+  function lookSkinIds(pf) {
+    return skinIds(pf).filter(function (id) { return skinLocal(id) !== "skin_me"; });
+  }
   function faceStamp() { remember("faceAt", String(Date.now())); }
 
   /* 最後に送った見た目の指紋。
@@ -2095,6 +2112,8 @@
       try { if (SKIN[slot]) URL.revokeObjectURL(SKIN[slot]); } catch (e) {}
       SKIN[slot] = r && r.blob ? URL.createObjectURL(r.blob) : "";
       remember(slot + "col", "");
+      /* 新しい絵には新しい番号。これでドライブに別の名前で置かれる */
+      remember("skinv_" + slot, String(Date.now()));
       progress(100);
       applySkin();
       if (slot === "me") faceStamp();
@@ -2109,6 +2128,7 @@
       try { if (SKIN[slot]) URL.revokeObjectURL(SKIN[slot]); } catch (e) {}
       SKIN[slot] = "";
       remember(slot + "col", "");
+      remember("skinv_" + slot, "");
       applySkin();
       if (slot === "me") faceStamp();
       savePrefs();
@@ -6106,7 +6126,7 @@
           progress(16 + Math.round((i / need.length) * 30));
           /* 何枚目かを控える。押したときに「止まっていない」と言えるように */
           syncStep = "写真を送っています…（" + i + " / " + need.length + "件）";
-          return DB.get("blobs", id).then(function (b) {
+          return DB.get("blobs", isSkin(id) ? skinLocal(id) : id).then(function (b) {
             if (!b || !b.blob) return null;
             return Shelf.put(place.parts, id, b.blob).then(function () { sent++; });
           }).catch(function () { return null; }).then(next);
@@ -6250,14 +6270,23 @@
       progress(74);
       /* 3. 足りない写真・録音・書類を取り寄せる */
       var want = partIds(kept);
-      skinIds(bestLook || readPrefs()).forEach(function (id) {
+      lookSkinIds(bestLook || readPrefs()).forEach(function (id) {
         if (want.indexOf(id) < 0) want.push(id);
       });
+      /* 丸の絵は最後に。見た目の画像より後に書くので、必ずこちらが残る */
       if (faceWin && want.indexOf(faceWin) < 0) want.push(faceWin);
       return DB.keys("blobs").then(function (have) {
         var box = {};
         have.forEach(function (k) { box[k] = 1; });
-        return want.filter(function (id) { return !box[id]; });
+        return want.filter(function (id) {
+          if (isSkin(id)) {
+            /* 番号付きの絵は、手元の番号と違えば取りにいく */
+            var v = skinVerOf(id);
+            if (!box[skinLocal(id)]) return true;
+            return !!v && skinVer(skinLocal(id).slice(5)) !== v;
+          }
+          return !box[id];
+        });
       });
     }).then(function (need) {
       if (!need.length) return null;
@@ -6269,7 +6298,7 @@
         if (it.thumbId) type[it.thumbId] = "image/jpeg";
         if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
       });
-      skinIds(bestLook || readPrefs()).forEach(function (id) { type[id] = "image/jpeg"; });
+      lookSkinIds(bestLook || readPrefs()).forEach(function (id) { type[id] = "image/jpeg"; });
       if (faceWin) type[faceWin] = "image/jpeg";
       return Shelf.listMany(place.partsAll).then(function (rows) {
         var at = {};
@@ -6284,7 +6313,11 @@
              数えておいて、あとでもう一度降ろしにくる */
           if (!at[id]) { out.miss++; return Promise.resolve().then(next); }
           return Shelf.get(at[id]).then(function (b) {
-            return DB.putRaw("blobs", { id: id, blob: new Blob([b], { type: type[id] || b.type }) });
+            var key = isSkin(id) ? skinLocal(id) : id;
+            return DB.putRaw("blobs", { id: key, blob: new Blob([b], { type: type[id] || b.type }) }).then(function () {
+              /* 取ってきた絵の番号を控える。次からは同じ番号なら取りにいかない */
+              if (isSkin(id)) remember("skinv_" + key.slice(5), skinVerOf(id));
+            });
           }).then(function () { out.got++; })
             .catch(function () { out.miss++; }).then(next);
         })();
@@ -6305,6 +6338,7 @@
         remember("faceAt", String(faceBest));
         if (!SKIN.me) return null;
         return DB.del("blobs", "skin_me").catch(function () {}).then(function () {
+          remember("skinv_me", "");
           try { URL.revokeObjectURL(SKIN.me); } catch (e) {}
           SKIN.me = "";
           applySkin();
@@ -6313,8 +6347,10 @@
       /* 絵を採るのは、実物が届いているときだけ。
          届いていないのに印だけ進めると、次からは「もう新しい」と
          見なして二度と取りにいかず、丸が空のまま固まってしまう */
-      return DB.get("blobs", faceWin).then(function (r) {
+      return DB.get("blobs", skinLocal(faceWin)).then(function (r) {
         if (!r || !r.blob) return null;
+        /* 番号付きなら、その番号の絵が届いているときだけ。古い絵のまま印を進めない */
+        if (skinVerOf(faceWin) && skinVer("me") !== skinVerOf(faceWin)) return null;
         out.look = 1;
         remember("faceAt", String(faceBest));
         return loadSkin();
