@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "113";
+  var APPVER = "114";
 
   /* ============================================================
      小道具
@@ -3812,7 +3812,7 @@
       + '<div class="panel-body">'
       + '<div class="field"><div class="label">テンプレート</div>'
       + '<div class="chipset" id="tplRow">' + tpl + "</div>"
-      + '<div class="hintline">名前とメモが最初から入ります。長押しすると並べ替え・削除ができます</div></div>'
+      + '<div class="hintline">タップで定型入力、長押しで並べ替えや削除ができます。</div></div>'
       + '<div class="field"><label class="label" for="exName">フォルダの名前</label>'
       + '<input class="inp" id="exName" value="' + esc(e.name) + '" placeholder="">'
       + '<div class="warnline" id="exDup" hidden></div></div>'
