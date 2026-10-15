@@ -1276,7 +1276,7 @@ header.top{padding-top:env(safe-area-inset-top)}
 /* 歯車は線が込んでいるぶん大きく見えるので、少しだけ落とす */
 
 .tabbar button span{
-  /* 5等分にしたぶん1枠が狭い。「新しいフォルダ」が収まる字の大きさ */
+  /* 5等分にしたぶん1枠が狭い。「新しくつくる」が収まる字の大きさ */
   font-size:10px; letter-spacing:0; white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; max-width:100%;
 }

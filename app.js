@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "103";
+  var APPVER = "104";
 
   /* ============================================================
      小道具
@@ -2141,8 +2141,8 @@
     if (!q) return;
     q.placeholder = screen === "shelf" ? "メモ・タグ・名前で探す" : "このフォルダの中を探す";
     var al = $("addLabel"), ab = $("btnAdd");
-    if (al) al.textContent = screen === "shelf" ? "新しいフォルダ" : "追加";
-    if (ab) ab.setAttribute("aria-label", screen === "shelf" ? "新しいフォルダを作る" : "写真や録音を追加する");
+    if (al) al.textContent = screen === "shelf" ? "新しくつくる" : "追加";
+    if (ab) ab.setAttribute("aria-label", screen === "shelf" ? "新しくつくる" : "写真や録音を追加する");
     var st = $("btnSort"), vt = document.querySelector(".viewtoggle");
     if (st) st.textContent = sortLabel();
     if (vt) vt.hidden = false;
@@ -7182,7 +7182,7 @@
       + "その場で撮ったもの・書いたものを放り込んでいくアプリです。</div>"
 
       + qa("はじめかた",
-          "<p>" + plusWhere() + "<b>＋ 新しいフォルダ</b>から、出来事ごとにフォルダを1つ作ります。"
+          "<p>" + plusWhere() + "<b>＋ 新しくつくる</b>から、出来事ごとにフォルダを1つ作ります。"
           + "展示会、取材、旅、会議。テンプレートを選ぶと、名前とメモの形が最初から入ります。</p>"
           + "<p>フォルダを開いて、" + plusWhere() + "<b>＋</b>から 撮る・写真・音声・動画・書類・メモ。"
           + "数の上限はありません。手が離せないときは、声で残せます。</p>")
