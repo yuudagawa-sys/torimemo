@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "109";
+  var APPVER = "110";
 
   /* ============================================================
      小道具
@@ -2728,7 +2728,7 @@
 
       /* ボードはフォルダを跨ぐものなので、カテゴリでは絞らない */
       if (boards.length && !digging) {
-        out.push('<div class="shelfsec"><div class="label">ボード<span class="n">' + boards.length + "</span></div>");
+        out.push('<div class="shelfsec"><div class="label">クリップボード<span class="n">' + boards.length + "</span></div>");
         out.push('<div class="bdgrid">');
         boards.slice().sort(function (x, y) { return (y.upAt || 0) - (x.upAt || 0); }).forEach(function (bd) {
           var sz = paperSize(bd);
@@ -7905,7 +7905,7 @@
       + '<button class="rowbtn" id="mkEx"><div><b>フォルダ</b>'
       + "<span>ひとつの出来事ごとに1つ。写真・録音・メモを放り込みます</span></div>"
       + '<svg><use href="#i-folder"/></svg></button>'
-      + '<button class="rowbtn" id="mkBd"><div><b>ボード</b>'
+      + '<button class="rowbtn" id="mkBd"><div><b>クリップボード</b>'
       + "<span>フォルダを跨いで、1枚の紙に写真を貼っていきます</span></div>"
       + '<svg><use href="#i-grid"/></svg></button>'
       + "</div></div>", "dialog");
@@ -7929,11 +7929,11 @@
         }).join("") + "</div></div>";
     }
 
-    sheet('<div class="panel-head"><h3>' + (mk ? "新しいボード" : "ボードの設定") + "</h3>"
+    sheet('<div class="panel-head"><h3>' + (mk ? "新しいクリップボード" : "クリップボードの設定") + "</h3>"
       + '<button class="iconbtn" id="bdNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button></div>'
       + '<div class="panel-body"><div class="stack">'
       + '<div class="field"><label class="label" for="bdName">名前</label>'
-      + '<input class="inp" id="bdName" value="' + esc(e.name) + '" placeholder="参考ボード"></div>'
+      + '<input class="inp" id="bdName" value="' + esc(e.name) + '" placeholder="参考クリップボード"></div>'
       + seg("紙の大きさ", Object.keys(PAPER).map(function (k) { return { k: k, name: PAPER[k].name }; }), pick.paper, "paper")
       /* 「自由」のときだけ出す。判型に当てはまらない誌面に合わせるため */
       + '<div class="field" id="bdFree" hidden><div class="label">幅と高さ（mm）</div>'
@@ -7946,7 +7946,7 @@
       + seg("向き", LAY, pick.lay, "lay")
       + '<div class="hintline" id="bdSize"></div>'
       + '<button class="cta" id="bdOk" style="width:100%">' + (mk ? "つくる" : "直す") + "</button>"
-      + (mk ? "" : '<button class="danger" id="bdDel" style="width:100%">このボードを削除</button>')
+      + (mk ? "" : '<button class="danger" id="bdDel" style="width:100%">このクリップボードを削除</button>')
       + "</div></div>", "dialog");
 
     noAutofill($("panel"));
@@ -7987,7 +7987,7 @@
 
     $("bdNo").onclick = closeSheet;
     $("bdOk").onclick = function () {
-      var nm = ($("bdName").value || "").trim() || "名前のないボード";
+      var nm = ($("bdName").value || "").trim() || "名前のないクリップボード";
       if (mk) {
         var rec = { id: uid(), name: nm, paper: pick.paper, lay: pick.lay,
                     pw: pick.pw, ph: pick.ph,
@@ -8003,7 +8003,7 @@
     if (dl) dl.onclick = function () {
       askYesNo({
         title: "「" + e.name + "」を削除",
-        body: "ボードだけを消します。貼ってあった写真そのものは、フォルダに残ります。",
+        body: "クリップボードだけを消します。貼ってあった写真そのものは、フォルダに残ります。",
         ok: "削除する"
       }, function () {
         DB.del("boards", e.id).then(function () {
@@ -8309,7 +8309,7 @@
     if (c && c.lock) {
       bar.innerHTML = '<button data-bd="lock" class="turn on" aria-label="固定を外す" title="固定を外す">'
         + '<svg class="lk"><use href="#i-lock"/></svg></button>'
-        + (isText(c) ? '<button data-bd="edit">文字</button>' : "");
+        + (isText(c) ? '<button data-bd="edit">編集</button>' : "");
       Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
         bt.onclick = function () { boardAct(b, bt.getAttribute("data-bd")); };
       });
@@ -8325,10 +8325,10 @@
         + '<button data-bd="left" class="turn" aria-label="左へ回す" title="左へ回す">↺</button>'
         + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
         + (isText(c)
-            ? '<button data-bd="edit">文字</button>'
+            ? '<button data-bd="edit">編集</button>'
             : '<button data-bd="cut" class="turn' + (cutOf(c) ? " on" : "")
               + '" aria-label="トリミング" title="トリミング"><svg class="lk"><use href="#i-crop"/></svg></button>')
-        + '<button data-bd="multi">複数</button>'
+        + '<button data-bd="multi">選択</button>'
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
@@ -8547,7 +8547,7 @@
         + '<div class="hintline">枠の中を指で動かせます。つまんでも寄せられます</div></div>'
         + '<button class="ghost" id="ctOff" style="width:100%">トリミングをやめて、元の形に戻す</button>'
         + '<div class="hintline">元の写真は切りません。ここで決めるのは'
-        + "<b>このボードでの見せ方</b>だけです。同じ写真を別のボードで違う形にできます。</div>"
+        + "<b>このクリップボードでの見せ方</b>だけです。同じ写真を別のクリップボードで違う形にできます。</div>"
         + "</div></div>", "dialog");
 
       function draw() {
@@ -8936,7 +8936,7 @@
     var big = Math.round(W * 0.075);
     setFont(g, big, true);
     g.fillStyle = PDF_INK;
-    var lines = wrapText(g, b.name || "名前のないボード", W - pad * 2);
+    var lines = wrapText(g, b.name || "名前のないクリップボード", W - pad * 2);
     var y = Math.round(H * 0.38);
     lines.forEach(function (ln, i) { g.fillText(ln, pad, y + i * big * 1.5); });
     y += lines.length * big * 1.5;
@@ -9175,7 +9175,7 @@
       + '<div class="panel-body"><div class="stack">'
       /* 人に渡すときの体裁。どちらも覚えておく */
       + '<label class="rowbtn" for="pfCover" style="cursor:pointer"><div><b>表紙をつける</b>'
-      + "<span>ボードの名前・紙の大きさ・枚数・日付を1枚目に</span></div>"
+      + "<span>クリップボードの名前・紙の大きさ・枚数・日付を1枚目に</span></div>"
       + '<input type="checkbox" id="pfCover"' + (pdfOn("cover") ? " checked" : "") + "></label>"
       + '<label class="rowbtn" for="pfCred" style="cursor:pointer"><div><b>出どころの一覧をつける</b>'
       + "<span>どのフォルダの・いつの写真か、メモとタグを最後に並べます</span></div>"
@@ -9285,7 +9285,7 @@
       + "<span>フォルダを跨いで、全部の中から選べます</span></div>"
       + '<svg><use href="#i-cam"/></svg></button>'
       + '<label class="rowbtn" id="baRoll" for="boardFileIn" style="cursor:pointer"><div><b>カメラロールから貼る</b>'
-      + "<span>入れた写真は「ボードの写真」フォルダにも残ります</span></div>"
+      + "<span>入れた写真は「クリップボードの写真」フォルダにも残ります</span></div>"
       + '<svg><use href="#i-cam"/></svg></label>'
       + '<button class="rowbtn" id="baTx"><div><b>文字を入れる</b>'
       + "<span>見出し、ひとこと、日付など。大きさ・色・書体を選べます</span></div>"
@@ -9304,7 +9304,7 @@
     var ex = null;
     exs.forEach(function (x) { if (x.forBoard) ex = x; });
     if (ex) return Promise.resolve(ex);
-    ex = { id: uid(), name: dedupeName("ボードの写真"), cat: "", date: today(),
+    ex = { id: uid(), name: dedupeName("クリップボードの写真"), cat: "", date: today(),
            venue: "", note: "", forBoard: true, createdAt: Date.now() };
     return DB.put("exhibitions", ex).then(function () { exs.push(ex); return ex; });
   }
