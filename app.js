@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "111";
+  var APPVER = "112";
 
   /* ============================================================
      小道具
@@ -4598,9 +4598,9 @@
      元のファイルは持たず、必ず縮めてから保存する。
      iPhoneの写真は 4032×3024・3〜5MB あるので、そのまま溜めると端末が持たない */
   var SIZES = [
-    { k: "full",  name: "そのまま",     edge: 2048, q: 0.86, note: "長辺2048px。細かいところまで残る" },
-    { k: "mid",   name: "軽め",         edge: 1600, q: 0.82, note: "長辺1600px。見るぶんには十分" },
-    { k: "small", name: "もっと軽め",   edge: 1280, q: 0.78, note: "長辺1280px。枚数が多い日に" }
+    { k: "full",  name: "高画質", edge: 2048, q: 0.86, note: "長辺2048px" },
+    { k: "mid",   name: "標準",   edge: 1600, q: 0.82, note: "長辺1600px" },
+    { k: "small", name: "軽め",   edge: 1280, q: 0.78, note: "長辺1280px" }
   ];
   function sizeSpec(k) {
     for (var i = 0; i < SIZES.length; i++) if (SIZES[i].k === k) return SIZES[i];
@@ -4826,23 +4826,20 @@
             + "<b>" + esc(x.name) + "</b><span>" + esc(x.note) + "</span></button>";
         }).join("")
       + "</div>"
-      + '<div class="hintline">元の写真は残しません。ここで選んだ大きさに縮めてから入ります。'
-      + "あとから大きくは戻せません。</div></div>"
+      + '<div class="hintline">取り込むときに、この大きさに縮めます。あとから大きくはできません。</div></div>'
       + '<div class="field"><div class="label">取り込むとき</div>'
       + '<div class="segs" id="szAsk">'
       + '<button data-ask="1" aria-pressed="' + asksSize() + '">毎回きく</button>'
       + '<button data-ask="0" aria-pressed="' + (!asksSize()) + '">きかない</button>'
       + "</div>"
-      + '<div class="hintline">アプリ内カメラで撮るときは、いつも上の大きさを使います。'
-      + "撮るたびに手が止まらないように、こちらではききません。</div></div>"
+      + '<div class="hintline">アプリのカメラで撮るときは、きかずに上の大きさを使います。</div></div>'
       + '<div class="field"><div class="label">時刻と場所で分ける</div>'
       + '<div class="segs" id="szSplit">'
-      + '<button data-sp="1" aria-pressed="' + (recall("nosplit") !== "1") + '">まとまりが分かれていたらきく</button>'
+      + '<button data-sp="1" aria-pressed="' + (recall("nosplit") !== "1") + '">きく</button>'
       + '<button data-sp="0" aria-pressed="' + (recall("nosplit") === "1") + '">きかない</button>'
       + "</div>"
-      + '<div class="hintline">写真に残っている撮影時刻と位置を見て、'
-      + "2時間以上あいているか500m以上離れていたら、別の場面として分けるかきいてきます。"
-      + "写真の中身は見ていません。</div></div>"
+      + '<div class="hintline">撮った時刻が2時間以上あいているか、場所が500m以上離れているときに、'
+      + "フォルダを分けるかききます。</div></div>"
       + "</div>", "dialog");
 
     $("szClose").onclick = closeSheet;
