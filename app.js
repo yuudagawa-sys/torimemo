@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "105";
+  var APPVER = "106";
 
   /* ============================================================
      小道具
@@ -3295,7 +3295,23 @@
     if (ev.target.id === "goLogin") { teamSheet(); return; }
   });
 
-  $("exPick").onclick = function () { if (screen === "folder") goShelf(); };
+  /* ボードの名前は、2回続けて押すと変えられる。
+     スマホでは dblclick が来ないことがあるので、押した間隔で見る */
+  var titleTapAt = 0;
+  $("exPick").onclick = function () {
+    if (screen === "folder") { goShelf(); return; }
+    if (screen !== "board") return;
+    var now = Date.now();
+    if (now - titleTapAt > 400) { titleTapAt = now; return; }
+    titleTapAt = 0;
+    var bd = boardById(curBoard);
+    if (!bd) return;
+    askText({ title: "名前を変える", value: bd.name || "", ok: "決定" }, function (v) {
+      if (v === bd.name) return;
+      bd.name = v;
+      saveBoard(bd, function () { paint(); });
+    });
+  };
 
   function clearSearch() {
     query = ""; $("q").value = "";
@@ -8931,6 +8947,61 @@
     return p.cv;
   }
 
+  /* 最後の1枚。真ん中にアイコンと FOLPO だけ。
+     アイコンが読めなくても、文字だけで仕上げる */
+  function endPage(b) {
+    var p = blankPage(b), g = p.g, W = p.W, H = p.H;
+    var side = Math.min(W, H);
+    var ic = Math.round(side * 0.16);
+    var big = Math.round(side * 0.06);
+    var gap = Math.round(ic * 0.32);
+    var top = Math.round((H - (ic + gap + big)) / 2);
+    function word() {
+      g.textAlign = "center";
+      g.textBaseline = "alphabetic";
+      g.fillStyle = "#3FAEB0";
+      g.font = "700 " + big + "px 'Helvetica Neue', Arial, sans-serif";
+      var x = W / 2, s = "FOLPO", sp = big * 0.18;
+      var w = 0, i;
+      for (i = 0; i < s.length; i++) w += g.measureText(s[i]).width;
+      w += sp * (s.length - 1);
+      g.textAlign = "left";
+      var cx = x - w / 2, y = top + ic + gap + big * 0.85;
+      for (i = 0; i < s.length; i++) {
+        g.fillText(s[i], cx, y);
+        cx += g.measureText(s[i]).width + sp;
+      }
+      return p.cv;
+    }
+    return new Promise(function (ok) {
+      var im = new Image();
+      var done = false;
+      function fin(drawn) {
+        if (done) return;
+        done = true;
+        if (drawn) {
+          var x = Math.round((W - ic) / 2), r = Math.round(ic * 0.22);
+          g.save();
+          g.beginPath();
+          g.moveTo(x + r, top);
+          g.arcTo(x + ic, top, x + ic, top + ic, r);
+          g.arcTo(x + ic, top + ic, x, top + ic, r);
+          g.arcTo(x, top + ic, x, top, r);
+          g.arcTo(x, top, x + ic, top, r);
+          g.closePath();
+          g.clip();
+          g.drawImage(im, x, top, ic, ic);
+          g.restore();
+        }
+        ok(word());
+      }
+      im.onload = function () { fin(true); };
+      im.onerror = function () { fin(false); };
+      setTimeout(function () { fin(false); }, 3000);
+      im.src = "icon-512.png";
+    });
+  }
+
   /* 出どころの一覧。1枚ずつ、どのフォルダの・いつの・どんなメモか。
      入りきらなければ紙を足す */
   function creditPages(b, pages) {
@@ -9140,7 +9211,8 @@
       try { creds = creditPages(b, ps); } catch (e) { creds = []; }
       creds.forEach(function (cv) { jobs.push({ kind: "ready", cv: cv }); });
     }
-    var extra = (wantCover ? 1 : 0) + creds.length;
+    jobs.push({ kind: "end" });
+    var extra = (wantCover ? 1 : 0) + creds.length + 1;
     toast("1冊にまとめています…（" + ps.length + "ページ"
       + (extra ? " ＋ " + extra + "ページ" : "") + "）");
 
@@ -9156,8 +9228,10 @@
         progress(94);
         try {
           var blob = pdfWrite(out);
-          var nm = "v1_" + safeName(b.name)
-            + (only ? "_" + (only[0] + 1) + "ページ" : "") + "_ボード.pdf";
+          /* 名前だけにする。ページが2枚以上あって1枚だけ出すときは、何ページ目かを添える */
+          var many = all.filter(function (pg) { return (pg.cards || []).length; }).length > 1;
+          var nm = safeName(b.name)
+            + (only && many ? "_" + (only[0] + 1) + "ページ" : "") + ".pdf";
           handOver(blob, nm).then(function (how) {
             progress(100);
             if (how !== "cancel") toast("1冊にしました（" + out.length + "ページ・" + mb(blob.size) + "）");
@@ -9168,6 +9242,7 @@
       var job = jobs[i++];
       progress(4 + Math.round((i / jobs.length) * 86));
       var make = job.kind === "board" ? renderPage(b, job.pg)
+        : job.kind === "end" ? endPage(b)
         : Promise.resolve(job.kind === "cover" ? coverPage(b, ps) : job.cv);
       make.then(add).then(next)
         .catch(function (e) { progress(100); toast(why(e), true); });
