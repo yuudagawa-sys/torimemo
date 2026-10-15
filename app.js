@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "112";
+  var APPVER = "113";
 
   /* ============================================================
      小道具
@@ -1038,11 +1038,9 @@
     out.sort(function (a, b) { return a.localeCompare(b, "ja"); });
     return out;
   }
-  /* そのフォルダのメモのフォーマット。無ければ空 */
-  function memoForm(ex) {
-    var e = ex || exById(curEx);
-    return (e && (e.form || e.hint)) || "";
-  }
+  /* 1件ごとのメモは空から始める。
+     テンプレートの中身は、フォルダの「ひとことメモ」に入れるようにした（v113） */
+  function memoForm() { return ""; }
   function memoHint(ex) {
     return memoForm(ex);
   }
@@ -2557,7 +2555,7 @@
       + "<span>写真とメモをZIPで。AirDrop・LINE・メールへも送れます</span></div>"
       + '<svg><use href="#i-share"/></svg></button>'
       + '<button class="rowbtn" id="fmEdit"><div><b>名前と設定を変える</b>'
-      + "<span>名前・カテゴリ・日付・場所・フォーマット</span></div>"
+      + "<span>名前・カテゴリ・日付・場所・メモ</span></div>"
       + '<svg><use href="#i-book"/></svg></button>'
       + '<button class="rowbtn danger-row" id="fmDel"><div><b>削除する</b>'
       + "<span>中の写真・録音・メモもいっしょに消えます</span></div>"
@@ -3814,7 +3812,7 @@
       + '<div class="panel-body">'
       + '<div class="field"><div class="label">テンプレート</div>'
       + '<div class="chipset" id="tplRow">' + tpl + "</div>"
-      + '<div class="hintline">名前とフォーマットが最初から入ります。長押しすると並べ替え・削除ができます</div></div>'
+      + '<div class="hintline">名前とメモが最初から入ります。長押しすると並べ替え・削除ができます</div></div>'
       + '<div class="field"><label class="label" for="exName">フォルダの名前</label>'
       + '<input class="inp" id="exName" value="' + esc(e.name) + '" placeholder="">'
       + '<div class="warnline" id="exDup" hidden></div></div>'
@@ -3827,10 +3825,6 @@
       + '<input class="inp" id="exDate" type="date" value="' + esc(e.date || "") + '"></div>'
       + '<div class="field"><label class="label" for="exVenue">場所</label>'
       + '<input class="inp" id="exVenue" value="' + esc(e.venue || "") + '" placeholder=""></div>'
-      + '<div class="field"><label class="label" for="exForm">フォーマット</label>'
-      + '<textarea class="ta" id="exForm" style="min-height:84px" placeholder="">'
-      + esc(e.form || e.hint || "") + "</textarea>"
-      + '<div class="hintline">1件ごとのメモがこの形で始まります。ここを直すとこのフォルダだけ変わります</div></div>'
       + '<div class="field"><label class="label" for="exNote">ひとことメモ</label>'
       + '<textarea class="ta" id="exNote" placeholder="">' + esc(e.note || "") + "</textarea>"
       + '<div class="hintline">フォルダ全体についての覚え書きです</div></div>'
@@ -3838,8 +3832,11 @@
       + (ex ? '<div class="panel-foot"><button class="danger" id="exDel">この' + esc(LL(e)) + 'を削除</button></div>' : ""), "dialog");
 
     $("dxClose").onclick = closeSheet;
-    var ff = $("exForm");
-    if (ff) ff.oninput = function () { this.dataset.touched = "1"; };
+    var ff = $("exNote");
+    if (ff) {
+      if (ex) ff.dataset.touched = "1";      /* 既存の設定を開いたときは上書きしない */
+      ff.oninput = function () { this.dataset.touched = "1"; };
+    }
     var nn = $("exName");
     if (nn) {
       if (ex) nn.dataset.touched = "1";      /* 既存の設定を開いたときは上書きしない */
@@ -3850,7 +3847,8 @@
     function showTpl() {
       var nm = $("exName");
       if (nm && !nm.dataset.touched && pick.name) nm.value = fillPattern(pick.name);
-      var f = $("exForm");
+      /* テンプレートの中身は、ひとことメモに入れる */
+      var f = $("exNote");
       if (f && !f.dataset.touched) f.value = pick.form || "";
     }
     /* 前に使ったカテゴリを、押すだけで入れられるように並べる */
@@ -3914,7 +3912,7 @@
         name: name, date: $("exDate").value || today(),
         venue: $("exVenue").value.trim(), note: $("exNote").value.trim(),
         cat: $("exCatIn") ? $("exCatIn").value.trim() : (ex ? ex.cat : ""),
-        tpl: pick.k, form: $("exForm") ? $("exForm").value : pick.form,
+        tpl: pick.k, form: "",
         createdAt: ex ? (ex.createdAt || Date.now()) : Date.now()
       };
       DB.put("exhibitions", rec).then(function () {
@@ -4155,7 +4153,7 @@
     var editing = base && !isBuiltIn(base) ? base : null;
 
     $("minibox").innerHTML = "<h4>" + (editing ? "テンプレートを直す" : "テンプレートを作る") + "</h4>"
-      + "<p>フォルダを作るときに、名前とフォーマットが入った状態で始まります。"
+      + "<p>フォルダを作るときに、名前とメモが入った状態で始まります。"
       + (base && isBuiltIn(base) ? "最初から入っているものは直せないので、写して作ります。" : "") + "</p>"
 
       + '<div class="field"><label class="label" for="tpK">テンプレート名</label>'
@@ -4165,10 +4163,10 @@
       + '<input class="inp" id="tpN" value="' + esc(base ? (base.name || "") : "") + '" placeholder="">'
       + '<div class="hintline">名前の欄に最初から入る文字です。<code>「日付」</code> と書くと、作った日の日付に変わります</div></div>'
 
-      + '<div class="field"><label class="label" for="tpH">フォーマット</label>'
+      + '<div class="field"><label class="label" for="tpH">メモ</label>'
       + '<textarea class="ta" id="tpH" style="min-height:76px" placeholder="">'
       + esc(base ? (base.form || "") : "") + "</textarea>"
-      + '<div class="hintline">1件ごとのメモがこの形で始まります。改行して項目を並べてください</div></div>'
+      + "</div>"
 
       + '<div class="field"><div class="label">こうなります</div>'
       + '<div class="tplpv" id="tpPv"></div></div>'
@@ -7279,7 +7277,7 @@
       + '<button class="rowbtn" id="sNew"><div><b>新しく作る</b>'
       + '<span>テンプレートを選んで、フォルダを1つ作ります</span></div><svg><use href="#i-plus"/></svg></button>'
       + (screen === "folder" ? '<button class="rowbtn" id="sExport"><div><b>このフォルダを共有する</b><span>AirDrop・LINE・メールへ。端末の共有シートが開きます</span></div><svg><use href="#i-share"/></svg></button>' : "")
-      + (screen === "folder" ? '<button class="rowbtn" id="sEdit"><div><b>このフォルダの設定</b><span>名前・カテゴリ・日付・場所・フォーマット・削除</span></div><svg><use href="#i-book"/></svg></button>' : "")
+      + (screen === "folder" ? '<button class="rowbtn" id="sEdit"><div><b>このフォルダの設定</b><span>名前・カテゴリ・日付・場所・メモ・削除</span></div><svg><use href="#i-book"/></svg></button>' : "")
       + '<button class="rowbtn" id="sTags"><div><b>タグを見る・整理する</b>'
       + "<span>付けたタグの一覧。名前の付け替えと削除もここで</span></div><svg><use href=\"#i-tag\"/></svg></button>"
       + '<button class="rowbtn" id="sSize"><div><b>写真の大きさ</b>'

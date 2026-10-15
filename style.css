@@ -2293,3 +2293,9 @@ label.mebig{cursor:pointer}
 }
 .card .lockmark svg{width:12px; height:12px}
 .boardbar button svg.lk{width:16px; height:16px; display:block}
+
+/* iPhone の日付欄は、中身の幅で横にはみ出すことがある。枠の幅に収める */
+input.inp[type="date"]{
+  -webkit-appearance:none; appearance:none; display:block;
+  width:100%; max-width:100%; min-width:0; box-sizing:border-box;
+}
