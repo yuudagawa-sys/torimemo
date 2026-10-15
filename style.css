@@ -550,6 +550,16 @@ audio, video.play{width:100%; border-radius:var(--r); background:var(--sunk); di
 .card{position:absolute; line-height:0}
 .card img{display:block; width:100%; height:auto; -webkit-user-drag:none; user-select:none; pointer-events:none}
 .card.sel{outline:2px solid var(--mark); outline-offset:2px}
+/* 入力欄の .sel（選ぶ欄）の飾りが、選んだ写真にも当たっていた。
+   余白が入って写真が小さく見えるので、ボードの写真では打ち消す */
+.paper .card.sel{padding:0; background:transparent}
+/* 複数選んでいるときの基準（ほかをこれに合わせる） */
+.card.base{outline-width:3px}
+.card.base::after{
+  content:"基準"; position:absolute; left:4px; top:4px; z-index:2;
+  font-size:11px; line-height:1; padding:3px 6px; border-radius:999px;
+  background:var(--mark); color:#fff; white-space:nowrap; pointer-events:none;
+}
 /* 切り取ったカード。枠の形は決め打ちで、はみ出したぶんは見せない */
 .paper .card.cut{overflow:hidden}
 .paper .card.cut img{width:auto; height:auto}

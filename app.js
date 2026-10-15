@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "104";
+  var APPVER = "105";
 
   /* ============================================================
      小道具
@@ -3306,7 +3306,7 @@
   /* 棚へ戻る。フォルダが並んでいるところ */
   function goShelf() {
     picking = false; picked = {};
-    screen = "shelf"; curBoard = null; boardSel = "";
+    screen = "shelf"; curBoard = null; boardSel = ""; boardMulti = [];
     dropFix();
     clearSearch(); shelfTag = "";
     dropUrls(); items = [];
@@ -7726,6 +7726,8 @@
 
   var boards = [];
   var curBoard = null, boardSel = "";
+  /* 複数選んでいるときの写真。最初の1枚が「基準」で、ほかをそれに合わせる */
+  var boardMulti = [];
 
   /* ボードは何ページでも持てる。
      前の版は1枚ぶんを cards に直接持っていたので、
@@ -8003,7 +8005,7 @@
     var b = boardById(id);
     if (!b) return Promise.resolve();
     picking = false; picked = {};
-    screen = "board"; curBoard = id; boardSel = "";
+    screen = "board"; curBoard = id; boardSel = ""; boardMulti = [];
     /* 開くたびに履歴は引き直す。ここから先の手だけを戻せる */
     undoStart(b);
     boardZoom = 1;
@@ -8040,7 +8042,8 @@
         (pg.cards || []).forEach(function (c, i) {
           var it = isText(c) ? null : anyItem(c.itemId);
           var src = it ? urlCache[it.blobId || it.thumbId] : "";
-          out += '<div class="card' + (c.id === boardSel ? " sel" : "")
+          out += '<div class="card' + (c.id === boardSel || boardMulti.indexOf(c.id) >= 0 ? " sel" : "")
+            + (boardMulti.length && boardMulti[0] === c.id ? " base" : "")
             + (isText(c) ? " tx" : (cutOf(c) ? " cut" : "")) + '" data-card="' + esc(c.id) + '"'
             + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
             + (isText(c) ? "" : cardFrame(it, c))
@@ -8268,6 +8271,22 @@
     var bar = $("boardBar");
     if (!bar) return;
     var hit = selOf(b), c = hit && hit.card;
+    if (boardMulti.length) {
+      bar.innerHTML = (boardMulti.length < 2
+          ? '<span class="bdhint">合わせたい写真を押す</span>'
+          : '<span class="bdhint">' + boardMulti.length + "枚</span>"
+            + '<button data-bm="w">幅をそろえる</button>'
+            + '<button data-bm="h">高さをそろえる</button>')
+        + '<button data-bm="end">やめる</button>';
+      Array.prototype.forEach.call(bar.querySelectorAll("[data-bm]"), function (bt) {
+        bt.onclick = function () {
+          var k = bt.getAttribute("data-bm");
+          if (k === "end") { boardMulti = []; boardSel = ""; paintStage(); return; }
+          alignSize(b, k);
+        };
+      });
+      return;
+    }
     bar.innerHTML = c
       /* 帯は横に1列しかない。字数を増やすとすぐ端が切れるので、
          言葉は短く、回すところは記号にしてある */
@@ -8278,6 +8297,7 @@
         + (isText(c)
             ? '<button data-bd="edit">文字</button>'
             : '<button data-bd="cut"' + (cutOf(c) ? ' class="on"' : "") + ">切り取り</button>")
+        + '<button data-bd="multi">複数</button>'
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
     Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
@@ -8285,10 +8305,59 @@
     });
   }
 
+  /* 複数選ぶ：押した写真を足す。もう入っていれば外す */
+  function pickMulti(id) {
+    if (!boardMulti.length && boardSel) boardMulti = [boardSel];
+    var i = boardMulti.indexOf(id);
+    if (i >= 0) boardMulti.splice(i, 1); else boardMulti.push(id);
+    boardSel = "";
+  }
+
+  /* 大きさをそろえる。最初に選んだ1枚（基準）に、ほかを合わせる。
+     幅：紙の幅に対する割合（w）をそのまま写す。
+     高さ：写真の縦横比から計算する（高さ＝幅÷縦横比）。
+     画面に出ている高さを測ると、描き直しの途中でぶれるので使わない */
+  function shapeOf(c, el) {
+    if (!isText(c)) {
+      var it = anyItem(c.itemId), t = cutOf(c);
+      if (t && t.r) return t.r;
+      if (it && it.w && it.h) return it.w / it.h;
+      var im = el && el.querySelector("img");
+      if (im && im.naturalWidth && im.naturalHeight) return im.naturalWidth / im.naturalHeight;
+    }
+    /* 文字のカードは、いま出ている形で見る */
+    return el && el.offsetHeight ? el.offsetWidth / el.offsetHeight : 0;
+  }
+  function alignSize(b, how) {
+    if (boardMulti.length < 2) return;
+    var byId = {};
+    pagesOf(b).forEach(function (pg) { (pg.cards || []).forEach(function (c) { byId[c.id] = c; }); });
+    function elOf(id) { return document.querySelector('.card[data-card="' + id + '"]'); }
+    var base = byId[boardMulti[0]];
+    if (!base) return;
+    var rb = shapeOf(base, elOf(base.id));
+    var H = rb ? base.w / rb : 0;   /* 基準の高さ（紙の幅に対する割合） */
+    boardMulti.slice(1).forEach(function (id) {
+      var c = byId[id];
+      if (!c) return;
+      if (how === "w") c.w = base.w;
+      else {
+        var r = shapeOf(c, elOf(id));
+        if (r && H) c.w = H * r;
+      }
+      c.w = Math.max(0.05, Math.min(1.6, c.w));
+    });
+    saveBoard(b, function () {
+      paint();
+      toast(how === "w" ? "幅をそろえました" : "高さをそろえました");
+    });
+  }
+
   function boardAct(b, k) {
     var hit = selOf(b);
     if (!hit) return;
     var page = hit.page, i = hit.i, c = hit.card;
+    if (k === "multi") { boardMulti = [c.id]; boardSel = ""; paintStage(); return; }
     if (k === "cut") { cutSheet(b, c); return; }
     if (k === "edit") { textSheet(b, c); return; }
     if (k === "off") { page.cards.splice(i, 1); boardSel = ""; }
@@ -8623,9 +8692,18 @@
         node = null; card = null; start = null; zoomFrom = null;
         paper.classList.remove("dragging");
         if (wasZoom) { moved = false; return; }
-        if (!had) { if (boardSel) { boardSel = ""; paintStage(); } return; }
+        if (!had) {
+          if (boardSel || boardMulti.length) { boardSel = ""; boardMulti = []; paintStage(); }
+          return;
+        }
         if (!moved) {
-          boardSel = had.getAttribute("data-card");
+          var cid = had.getAttribute("data-card");
+          /* 複数選ぶ状態のとき（パソコンは Shift を押しながらでも）は、足したり外したり */
+          if (boardMulti.length || (e.shiftKey && boardSel && boardSel !== cid)) {
+            pickMulti(cid);
+          } else {
+            boardSel = cid;
+          }
           paintStage();
           return;
         }
