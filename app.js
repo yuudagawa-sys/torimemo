@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "110";
+  var APPVER = "111";
 
   /* ============================================================
      小道具
@@ -6992,24 +6992,22 @@
           + '<svg><use href="#i-help"/></svg></button>'
           + '<div id="tmProbeOut"></div>'
           + '<button class="danger" id="tmOff">ログアウト</button>'
-        : '<button class="rowbtn" id="tmOn"><div><b>Googleでログイン</b>'
-          + "<span>この端末を、ほかの端末と同じ中身にします。"
-          + "別の端末で使っていたフォルダは、ログインすれば出てきます</span></div>"
+        : '<button class="rowbtn" id="tmOn"><div><b>Googleでログイン</b></div>'
           + '<svg><use href="#i-sync"/></svg></button>';
 
       sheet('<div class="panel-head"><h3>アカウント</h3>'
         + '<button class="iconbtn" id="tmClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
         + '<div class="panel-body"><div class="stack">'
-        + '<div class="hintline">使う端末それぞれで<b>同じGoogleアカウントにログイン</b>すると、中身がそろいます。'
-        + "置き場所は<b>あなた自身のGoogleドライブ</b>です。写真がフォルポのサーバーを通ることはありません。</div>"
+        + '<div class="hintline">Googleでログインすると、ほかの端末でも同じフォルダが見られます。'
+        + "保存先はあなたのGoogleドライブです。</div>"
         + body
         + '<div class="saveflag" id="tmSay"></div>'
-        + '<div class="hintline">いまは<b>お試しの段階</b>です。使えるのは、Google側に登録した人だけ。'
-        + "一緒に使いたい人が決まったら、その人のGmailを登録してください。</div>"
-        + "</div></div>"
-        + '<div class="panel-foot"><span class="label">送っていないものは、これまで通りこの端末の中だけにあります</span></div>', "dialog");
+        + '<button class="hintline" id="tmHelp" style="text-align:left;text-decoration:underline;cursor:pointer">'
+        + "詳しくはヘルプへ</button>"
+        + "</div></div>", "dialog");
 
       $("tmClose").onclick = closeSheet;
+      $("tmHelp").onclick = faqSheet;
       var say = function (t, bad) {
         var e = $("tmSay");
         if (e) { e.textContent = t; e.style.color = bad ? "var(--rec)" : ""; }
@@ -7017,7 +7015,7 @@
 
       var on1 = $("tmOn");
       if (on1) on1.onclick = function () {
-        say("Googleの画面を開いています…");
+        say("Googleを開いています…");
         Shelf.link().then(function () {
           return deviceCheck(true);
         }).then(function () {
@@ -7217,7 +7215,8 @@
 
       + qa("iPhoneとパソコンで同じ中身にする",
           "<p>使う端末それぞれで、画面の<b>" + meWhere() + "</b>から同じGoogleアカウントにログインします。"
-          + "写真が置かれるのは<b>あなた自身のGoogleドライブ</b>で、フォルポのサーバーは通りません。</p>"
+          + "</p><p>写真はあなたのGoogleドライブに直接保存されます。フォルポのサーバーには送られません。</p>"
+          + "<p>ログインしなくても、この端末ではそのまま使えます。</p>"
           + "<p>つないだあとは、<b>アプリを開いたときと、ほかのことをして戻ってきたとき</b>に自動で合わせます。"
           + "手で合わせたいときは「ほかの端末の変更を取り込む」を押します。</p>"
           + "<p>写真は<b>一度送れば二度は送りません</b>。2回目からは記録だけなので、通信はごくわずかです。</p>"
