@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "106";
+  var APPVER = "107";
 
   /* ============================================================
      小道具
@@ -9273,7 +9273,8 @@
     var b = boardById(curBoard);
     if (!b) return;
     var all = (browseAll || []).filter(function (it) { return it.kind === "photo" && (it.thumbId || it.blobId); });
-    all = sortItems(all);
+    /* 貼るときは、いつも新しい順。フォルダの並べ方には合わせない */
+    all.sort(function (x, y) { return (y.createdAt || 0) - (x.createdAt || 0); });
     if (!all.length) { toast("貼れる写真がまだありません。", true); return; }
     var take = {};
 
