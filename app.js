@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "107";
+  var APPVER = "108";
 
   /* ============================================================
      小道具
@@ -8060,11 +8060,13 @@
           var src = it ? urlCache[it.blobId || it.thumbId] : "";
           out += '<div class="card' + (c.id === boardSel || boardMulti.indexOf(c.id) >= 0 ? " sel" : "")
             + (boardMulti.length && boardMulti[0] === c.id ? " base" : "")
-            + (isText(c) ? " tx" : (cutOf(c) ? " cut" : "")) + '" data-card="' + esc(c.id) + '"'
+            + (isText(c) ? " tx" : (cutOf(c) ? " cut" : "")) + (c.lock ? " locked" : "")
+            + '" data-card="' + esc(c.id) + '"'
             + ' style="left:' + (c.x * 100) + "%;top:" + (c.y * 100) + "%;width:" + (c.w * 100) + "%;"
             + (isText(c) ? "" : cardFrame(it, c))
             + "transform:translate(-50%,-50%) rotate(" + (c.rot || 0) + 'deg);z-index:' + (i + 1) + '">'
             + (isText(c) ? txInner(c) : cardInner(it, src, c))
+            + (c.lock ? '<span class="lockmark"><svg><use href="#i-lock"/></svg></span>' : "")
             + "</div>";
         });
         out += "</div></div>";
@@ -8303,10 +8305,22 @@
       });
       return;
     }
+    /* 固定しているものは、鍵を外すか、文字を直すかだけ */
+    if (c && c.lock) {
+      bar.innerHTML = '<button data-bd="lock" class="turn on" aria-label="固定を外す" title="固定を外す">'
+        + '<svg class="lk"><use href="#i-lock"/></svg></button>'
+        + (isText(c) ? '<button data-bd="edit">文字</button>' : "");
+      Array.prototype.forEach.call(bar.querySelectorAll("[data-bd]"), function (bt) {
+        bt.onclick = function () { boardAct(b, bt.getAttribute("data-bd")); };
+      });
+      return;
+    }
     bar.innerHTML = c
       /* 帯は横に1列しかない。字数を増やすとすぐ端が切れるので、
          言葉は短く、回すところは記号にしてある */
-      ? '<button data-bd="back">後ろへ</button>'
+      ? '<button data-bd="lock" class="turn" aria-label="固定する" title="固定する">'
+        + '<svg class="lk"><use href="#i-unlock"/></svg></button>'
+        + '<button data-bd="back">後ろへ</button>'
         + '<button data-bd="front">前へ</button>'
         + '<button data-bd="left" class="turn" aria-label="左へ回す" title="左へ回す">↺</button>'
         + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
@@ -8355,7 +8369,7 @@
     var H = rb ? base.w / rb : 0;   /* 基準の高さ（紙の幅に対する割合） */
     boardMulti.slice(1).forEach(function (id) {
       var c = byId[id];
-      if (!c) return;
+      if (!c || c.lock) return;
       if (how === "w") c.w = base.w;
       else {
         var r = shapeOf(c, elOf(id));
@@ -8373,6 +8387,13 @@
     var hit = selOf(b);
     if (!hit) return;
     var page = hit.page, i = hit.i, c = hit.card;
+    if (k === "lock") {
+      c.lock = !c.lock;
+      if (!c.lock) delete c.lock;
+      saveBoard(b, function () { paint(); toast(c.lock ? "固定しました" : "固定を外しました"); });
+      return;
+    }
+    if (c.lock && k !== "edit") return;
     if (k === "multi") { boardMulti = [c.id]; boardSel = ""; paintStage(); return; }
     if (k === "cut") { cutSheet(b, c); return; }
     if (k === "edit") { textSheet(b, c); return; }
@@ -8640,6 +8661,8 @@
       n++;
       if (n === 1) {
         node = el; card = el ? find(el.getAttribute("data-card")) : null;
+        /* 固定しているものは、押して選べるが、動かせない */
+        if (card && card.lock) card = null;
         moved = false;
         var r = paper.getBoundingClientRect();
         start = card ? { x: card.x, y: card.y, w: card.w, rot: card.rot || 0,
