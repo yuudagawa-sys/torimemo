@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "114";
+  var APPVER = "115";
 
   /* ============================================================
      小道具
@@ -3816,11 +3816,12 @@
       + '<div class="field"><label class="label" for="exName">フォルダの名前</label>'
       + '<input class="inp" id="exName" value="' + esc(e.name) + '" placeholder="">'
       + '<div class="warnline" id="exDup" hidden></div></div>'
-      + '<div class="field"><label class="label" for="exCatIn">カテゴリ</label>'
-      + '<input class="inp" id="exCatIn" value="' + esc(e.cat || "") + '" placeholder="" list="catList" autocomplete="off">'
-      + '<datalist id="catList">' + catOpts() + "</datalist>"
-      + '<div class="chipset" id="catPast"></div>'
-      + '<div class="hintline">フォルダを絞り込むための名前です</div></div>'
+      /* カテゴリは、作るときはテンプレートから自動で付ける。直すのは設定から */
+      + (ex ? '<div class="field"><label class="label" for="exCatIn">カテゴリ</label>'
+        + '<input class="inp" id="exCatIn" value="' + esc(e.cat || "") + '" placeholder="" list="catList" autocomplete="off">'
+        + '<datalist id="catList">' + catOpts() + "</datalist>"
+        + '<div class="chipset" id="catPast"></div>'
+        + '<div class="hintline">フォルダを絞り込むための名前です</div></div>' : "")
       + '<div class="field"><label class="label" for="exDate">日付</label>'
       + '<input class="inp" id="exDate" type="date" value="' + esc(e.date || "") + '"></div>'
       + '<div class="field"><label class="label" for="exVenue">場所</label>'
@@ -3844,6 +3845,8 @@
     }
 
     var pick = { k: e.tpl || "", form: e.form || e.hint || "", name: "" };
+    /* テンプレートの名前を、そのままカテゴリにする。白紙（名前もメモも空）なら付けない */
+    function tplCat(p) { return p.k && (p.name || p.form) ? p.k : ""; }
     function showTpl() {
       var nm = $("exName");
       if (nm && !nm.dataset.touched && pick.name) nm.value = fillPattern(pick.name);
@@ -3911,7 +3914,7 @@
         id: ex ? ex.id : uid(),
         name: name, date: $("exDate").value || today(),
         venue: $("exVenue").value.trim(), note: $("exNote").value.trim(),
-        cat: $("exCatIn") ? $("exCatIn").value.trim() : (ex ? ex.cat : ""),
+        cat: ex ? ($("exCatIn") ? $("exCatIn").value.trim() : (ex.cat || "")) : tplCat(pick),
         tpl: pick.k, form: "",
         createdAt: ex ? (ex.createdAt || Date.now()) : Date.now()
       };
