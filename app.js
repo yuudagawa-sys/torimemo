@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "108";
+  var APPVER = "109";
 
   /* ============================================================
      小道具
@@ -8326,7 +8326,8 @@
         + '<button data-bd="right" class="turn" aria-label="右へ回す" title="右へ回す">↻</button>'
         + (isText(c)
             ? '<button data-bd="edit">文字</button>'
-            : '<button data-bd="cut"' + (cutOf(c) ? ' class="on"' : "") + ">切り取り</button>")
+            : '<button data-bd="cut" class="turn' + (cutOf(c) ? " on" : "")
+              + '" aria-label="トリミング" title="トリミング"><svg class="lk"><use href="#i-crop"/></svg></button>')
         + '<button data-bd="multi">複数</button>'
         + '<button data-bd="off" class="bad">はずす</button>'
       : '<span class="bdhint">写真を押すと、動かしたり大きさを変えたりできます</span>';
@@ -8532,7 +8533,7 @@
     ensureUrls([it.blobId || it.thumbId]).then(function () {
       var src = urlCache[it.blobId || it.thumbId] || "";
 
-      sheet('<div class="panel-head"><h3>切り取り</h3>'
+      sheet('<div class="panel-head"><h3>トリミング</h3>'
         + '<div style="display:flex;gap:8px">'
         + '<button class="iconbtn" id="ctNo" aria-label="やめる"><svg><use href="#i-x"/></svg></button>'
         + '<button class="iconbtn ok" id="ctOk" aria-label="決める"><svg><use href="#i-check"/></svg></button>'
@@ -8544,7 +8545,7 @@
         + '<div class="field"><label class="label" for="ctZoom">寄り</label>'
         + '<input type="range" id="ctZoom" min="100" max="300" step="1" style="width:100%">'
         + '<div class="hintline">枠の中を指で動かせます。つまんでも寄せられます</div></div>'
-        + '<button class="ghost" id="ctOff" style="width:100%">切り取りをやめて、元の形に戻す</button>'
+        + '<button class="ghost" id="ctOff" style="width:100%">トリミングをやめて、元の形に戻す</button>'
         + '<div class="hintline">元の写真は切りません。ここで決めるのは'
         + "<b>このボードでの見せ方</b>だけです。同じ写真を別のボードで違う形にできます。</div>"
         + "</div></div>", "dialog");
@@ -9283,6 +9284,9 @@
       + '<button class="rowbtn" id="baPic"><div><b>写真を貼る</b>'
       + "<span>フォルダを跨いで、全部の中から選べます</span></div>"
       + '<svg><use href="#i-cam"/></svg></button>'
+      + '<label class="rowbtn" id="baRoll" for="boardFileIn" style="cursor:pointer"><div><b>カメラロールから貼る</b>'
+      + "<span>入れた写真は「ボードの写真」フォルダにも残ります</span></div>"
+      + '<svg><use href="#i-cam"/></svg></label>'
       + '<button class="rowbtn" id="baTx"><div><b>文字を入れる</b>'
       + "<span>見出し、ひとこと、日付など。大きさ・色・書体を選べます</span></div>"
       + '<svg><use href="#i-note"/></svg></button>'
@@ -9290,6 +9294,63 @@
     $("baNo").onclick = closeSheet;
     $("baPic").onclick = function () { closeSheet(); boardPick(); };
     $("baTx").onclick = function () { closeSheet(); addText(b); };
+    /* 選ぶ画面は label で開く（iPhone・Mac で確実に開くように）。閉じるのは選んだあと */
+    $("baRoll").onclick = function () { fileWait(); };
+  }
+
+  /* カメラロールから直接貼る。写真は「ボードの写真」フォルダに入れておく。
+     フォルダに置かないと、同期にも、出どころの一覧にも乗らないので */
+  function boardFolder() {
+    var ex = null;
+    exs.forEach(function (x) { if (x.forBoard) ex = x; });
+    if (ex) return Promise.resolve(ex);
+    ex = { id: uid(), name: dedupeName("ボードの写真"), cat: "", date: today(),
+           venue: "", note: "", forBoard: true, createdAt: Date.now() };
+    return DB.put("exhibitions", ex).then(function () { exs.push(ex); return ex; });
+  }
+  $("boardFileIn").onchange = function () {
+    var list = Array.prototype.slice.call(this.files || []);
+    this.value = "";
+    closeSheet();
+    var b = boardById(curBoard);
+    if (!b || !list.length) return;
+    var ids = [], failed = 0;
+    progress(2);
+    toast(list.length + " 枚を取り込んでいます…");
+    boardFolder().then(function (ex) {
+      var chain = Promise.resolve();
+      list.forEach(function (f, n) {
+        chain = chain.then(function () {
+          return savePhoto(f, ex.id, [], n).then(function (rec) { ids.push(rec.id); },
+            function () { failed++; })
+            .then(function () { progress(Math.round(((ids.length + failed) / list.length) * 100)); });
+        });
+      });
+      return chain;
+    }).then(function () {
+      progress(100);
+      if (!ids.length) { toast("取り込めませんでした", true); return; }
+      pasteCards(b, ids);
+      saveBoard(b, function () {
+        paint();
+        toast(ids.length + " 枚を貼りました" + (failed ? "（" + failed + " 枚は入りませんでした）" : ""), !!failed);
+      });
+    }).catch(function (e) { progress(100); toast(why(e), true); });
+  };
+
+  /* まん中あたりから、少しずつずらして重ねて置く。
+     入れ先は、いま画面に見えているページ */
+  function pasteCards(b, ids) {
+    var page = shownPage(b);
+    var k = (page.cards || []).length;
+    ids.forEach(function (id, i) {
+      var step = (k + i) % 8;
+      page.cards.push({
+        id: uid(), itemId: id,
+        x: 0.34 + (step % 4) * 0.1, y: 0.3 + Math.floor(step / 4) * 0.22,
+        w: 0.34, rot: 0
+      });
+    });
   }
 
   function boardPick() {
@@ -9360,18 +9421,7 @@
       $("bpOk").onclick = function () {
         var ids = Object.keys(take);
         if (!ids.length) { closeSheet(); return; }
-        /* まん中あたりから、少しずつずらして重ねて置く。
-           入れ先は、いま画面に見えているページ */
-        var page = shownPage(b);
-        var k = (page.cards || []).length;
-        ids.forEach(function (id, i) {
-          var step = (k + i) % 8;
-          page.cards.push({
-            id: uid(), itemId: id,
-            x: 0.34 + (step % 4) * 0.1, y: 0.3 + Math.floor(step / 4) * 0.22,
-            w: 0.34, rot: 0
-          });
-        });
+        pasteCards(b, ids);
         saveBoard(b, function () { closeSheet(); paint(); toast(ids.length + " 枚を貼りました"); });
       };
     });
