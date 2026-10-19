@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "120";
+  var APPVER = "121";
 
   /* ============================================================
      小道具
@@ -7746,7 +7746,10 @@
       (meta.boards || []).forEach(function (x) { pairs.push(["boards", x]); });
       Object.keys(blobs).forEach(function (id) {
         var it = (meta.items || []).filter(function (x) { return x.blobId === id || x.thumbId === id; })[0];
-        var type = it ? (it.thumbId === id && it.kind === "photo" ? "image/jpeg" : (it.mime || "application/octet-stream")) : "application/octet-stream";
+        /* 小さい絵（写真の縮小・動画の表紙）は JPEG。本体はそのものの種類。
+           動画の表紙を動画の種類で入れると、戻したあと表紙が出なくなる */
+        var small = it && it.thumbId === id && it.thumbId !== it.blobId;
+        var type = it ? (small ? "image/jpeg" : (it.mime || "application/octet-stream")) : "application/octet-stream";
         pairs.push(["blobs", { id: id, blob: new Blob([blobs[id]], { type: type }) }]);
       });
 
