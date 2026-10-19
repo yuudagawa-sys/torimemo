@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "118";
+  var APPVER = "119";
 
   /* ============================================================
      小道具
@@ -6265,12 +6265,31 @@
         /* それぞれの端末が「いまのアイコン」として書いている絵と、その実物があるか */
         var i = 0;
         return (function next() {
-          if (i >= out.devs.length) return out;
+          if (i >= out.devs.length) {
+            /* 置き場に無いものが、この端末の中にはあるか */
+            return DB.keys("blobs").then(function (keys) {
+              var box = {};
+              keys.forEach(function (k) { box[k] = 1; });
+              out.devs.forEach(function (d) { (d.miss || []).forEach(function (m) { m.here = !!box[m.id]; }); });
+              return out;
+            }, function () { return out; });
+          }
           var d = out.devs[i++];
           return Shelf.get(d.fileId).then(function (b) { return b.text(); }).then(function (t) {
             var ix = JSON.parse(t);
             d.face = ix.face || ""; d.faceAt = Number(ix.faceAt || 0);
             d.faceHere = !d.face || !!have[d.face];
+            /* この目録が指している写真のうち、置き場に無いもの。どのフォルダの何かまで */
+            var exName = {};
+            (ix.exhibitions || []).forEach(function (e) { exName[e.id] = e.name || ""; });
+            d.miss = [];
+            (ix.items || []).forEach(function (it) {
+              [it.blobId, it.thumbId, it.origId].forEach(function (id, n) {
+                if (!id || have[id] || (n === 1 && id === it.blobId)) return;
+                d.miss.push({ id: id, kind: kindName(it.kind) + (n === 1 ? "の小さい絵" : n === 2 ? "の元の絵" : ""),
+                  ex: exName[it.exId] || "", at: it.createdAt || 0, here: false });
+              });
+            });
           }).catch(function () {}).then(next);
         })();
       });
@@ -7379,6 +7398,7 @@
           if (!$("tmProbeOut")) return;
           var names = devNames();
           $("tmProbeOut").innerHTML = '<div class="qabody" style="margin-top:6px">'
+            + "<p>版：<b>v" + esc(APPVER) + "</b></p>"
             + "<p>この端末の札：<b>" + esc(devId()) + "</b>（" + esc(deviceName()) + "）</p>"
             + "<p>アカウント：<b>" + esc(Shelf.who() || "不明") + "</b></p>"
             + "<p>「フォルポ」フォルダの数：<b>" + r.roots + "</b>"
@@ -7396,6 +7416,14 @@
                       + "（" + esc(d.dev) + "）・" + whenTxt(d.at) + "・" + mb(d.size)
                       + (d.faceAt ? "<br>アイコン：" + esc(String(d.face || "なし").replace("skin_me~", "")) + "・"
                         + whenTxt(d.faceAt) + (d.face ? (d.faceHere ? "・実物あり" : "・<b>実物なし</b>") : "") : "")
+                      + (d.miss && d.miss.length
+                        ? "<br>置き場に無い写真：<b>" + d.miss.length + "件</b>"
+                          + d.miss.slice(0, 5).map(function (m) {
+                              return "<br>・" + (m.ex ? "「" + esc(m.ex) + "」" : "フォルダ不明") + "の" + esc(m.kind)
+                                + (m.at ? "（" + whenTxt(m.at) + "）" : "")
+                                + (m.here ? "・この端末にはある" : "・この端末にも無い");
+                            }).join("")
+                        : (d.miss ? "<br>置き場に無い写真：なし" : ""))
                       + "</li>";
                   }).join("") + "</ul>"
                 : "")
