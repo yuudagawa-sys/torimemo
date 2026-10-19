@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "116";
+  var APPVER = "117";
 
   /* ============================================================
      小道具
@@ -1858,9 +1858,27 @@
         if (r && r.blob) {
           try { if (SKIN[k]) URL.revokeObjectURL(SKIN[k]); } catch (e) {}
           SKIN[k] = URL.createObjectURL(r.blob);
+          /* 番号の付け方を入れる前（v103より前）の絵には番号が無い。
+             番号が無いと、受け取る側は「もう持っている」と見なして古い絵のままになる。
+             中身から番号を作るので、同じ絵なら、どの端末でも同じ番号になる */
+          if (!skinVer(k)) {
+            return blobTag(r.blob).then(function (v) { if (v && !skinVer(k)) remember("skinv_" + k, v); });
+          }
         }
       }, function () {});
     })).then(applySkin, function () {});
+  }
+  /* 中身の指紋。短い16進。作れなければ空 */
+  function blobTag(blob) {
+    try {
+      if (!(window.crypto && crypto.subtle && blob.arrayBuffer)) return Promise.resolve("");
+      return blob.arrayBuffer().then(function (ab) { return crypto.subtle.digest("SHA-1", ab); })
+        .then(function (h) {
+          return Array.prototype.map.call(new Uint8Array(h).slice(0, 6), function (x) {
+            return ("0" + x.toString(16)).slice(-2);
+          }).join("");
+        }, function () { return ""; });
+    } catch (e) { return Promise.resolve(""); }
   }
 
   function areaEl(k) {
@@ -2767,7 +2785,8 @@
             var src = urlCache[it.thumbId || it.blobId];
             var inner;
             if (it.kind === "photo" && src) inner = '<img src="' + src + '" loading="lazy" alt="">';
-            else if (it.kind === "video" && src) inner = '<video src="' + src + '#t=0.1" preload="metadata" muted playsinline></video>';
+            else if (it.kind === "video" && src) inner = hasPoster(it) ? '<img src="' + src + '" loading="lazy" alt="">'
+              : '<video src="' + src + '#t=0.1" preload="metadata" muted playsinline></video>';
             else if (it.kind === "file") inner = '<div class="htext hfile">' + esc(fileMark(it)) + "<br>" + esc((it.name || "").slice(0, 40)) + "</div>";
             else inner = '<div class="htext">' + esc((it.memo || "（メモなし）").slice(0, 60)) + "</div>";
             out.push('<button class="hit" data-hit="' + esc(it.id) + '" data-hitex="' + esc(it.exId) + '">'
@@ -2824,6 +2843,7 @@
     });
     ensureUrls(need).then(function () {
       if (seq !== paintSeq) return;
+      posterSweep(list);
       if (viewMode === "feed") { stage.innerHTML = feedHtml(list); wireFeed(list); return; }
       var html = '<div class="sheetgrid">';
       list.forEach(function (it, n) {
@@ -2835,7 +2855,9 @@
         if (it.kind === "photo") {
           body = src ? '<img src="' + src + '" loading="lazy" decoding="async" alt="">' : '<div class="mediatile"></div>';
         } else if (it.kind === "video") {
-          body = src ? '<video src="' + src + '#t=0.1" preload="metadata" muted playsinline></video>' : '<div class="mediatile"></div>';
+          body = !src ? '<div class="mediatile"></div>'
+            : hasPoster(it) ? '<img src="' + src + '" loading="lazy" decoding="async" alt="">'
+            : '<video src="' + src + '#t=0.1" preload="metadata" muted playsinline></video>';
           pips += '<span class="pip"><svg><use href="#i-vid"/></svg></span>';
         } else if (it.kind === "text") {
           body = '<div class="texttile">'
@@ -3396,6 +3418,77 @@
   $("skinIn").onchange = function () { saveSkin(this.files && this.files[0]); this.value = ""; };
 
   /* 音声・動画の長さを読む。読めなければ0を返す */
+  /* 動画の表紙。1コマ目あたりを小さなJPEGにする。
+     動画そのものより軽いので先に届き、動画を読めない端末でも絵が出る */
+  function videoPoster(blob) {
+    return new Promise(function (ok) {
+      var done = false, u = "", v = document.createElement("video");
+      function fin(b) {
+        if (done) return;
+        done = true;
+        try { v.removeAttribute("src"); v.load(); } catch (e) {}
+        try { URL.revokeObjectURL(u); } catch (e) {}
+        ok(b || null);
+      }
+      function grab() {
+        var w = v.videoWidth, h = v.videoHeight;
+        if (!w || !h) { fin(null); return; }
+        var sc = Math.min(1, 400 / Math.max(w, h));
+        var c = document.createElement("canvas");
+        c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+        try { c.getContext("2d").drawImage(v, 0, 0, c.width, c.height); } catch (e) { fin(null); return; }
+        try { c.toBlob(function (b) { fin(b); }, "image/jpeg", 0.72); } catch (e) { fin(null); }
+      }
+      v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.preload = "auto";
+      v.onloadedmetadata = function () {
+        try { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); } catch (e) { grab(); }
+      };
+      v.onseeked = grab;
+      v.onerror = function () { fin(null); };
+      setTimeout(function () { fin(null); }, 8000);
+      try { u = URL.createObjectURL(blob); v.src = u; } catch (e) { fin(null); }
+    });
+  }
+  function hasPoster(it) { return it.kind === "video" && it.thumbId && it.thumbId !== it.blobId; }
+  /* 表紙の無い動画に、あとから表紙を付ける。動画が手元にある端末だけがやれる。
+     付けたら記録が新しくなるので、同期でほかの端末にも届く */
+  var posterTried = {};
+  function posterSweep(list) {
+    var todo = (list || []).filter(function (it) {
+      return it.kind === "video" && it.blobId && !posterTried[it.id];
+    });
+    if (!todo.length) return;
+    var made = 0, i = 0;
+    (function next() {
+      if (i >= todo.length) { if (made) paint(); return; }
+      var it = todo[i++];
+      posterTried[it.id] = 1;
+      DB.get("blobs", it.blobId).then(function (r) {
+        if (!r || !r.blob) return null;
+        var blob = r.blob;
+        /* 同期で受け取った動画が「JPEG」の札で入っていたことがある（v116まで）。
+           札が違うと再生も表紙作りもできないので、正しい札に貼り替える */
+        var fix = null;
+        if (it.mime && blob.type !== it.mime && /^image\//.test(blob.type || "")) {
+          blob = new Blob([blob], { type: it.mime });
+          fix = DB.putRaw("blobs", { id: it.blobId, blob: blob }).then(function () {
+            if (urlCache[it.blobId]) { try { URL.revokeObjectURL(urlCache[it.blobId]); } catch (e) {} delete urlCache[it.blobId]; }
+            made++;
+          });
+        }
+        return Promise.resolve(fix).then(function () {
+          if (hasPoster(it)) return null;
+          return videoPoster(blob);
+        }).then(function (pb) {
+          if (!pb) return null;
+          var tid = uid();
+          it.thumbId = tid;
+          return DB.putMany([["blobs", { id: tid, blob: pb }], ["items", it]]).then(function () { made++; });
+        });
+      }).catch(function () {}).then(next);
+    })();
+  }
+
   function mediaDuration(blob, isVideo) {
     return new Promise(function (res) {
       var url, el;
@@ -3482,21 +3575,24 @@
       var chain = Promise.resolve();
       list.forEach(function (f, n) {
         chain = chain.then(function () {
-          return mediaDuration(f, isVideo).then(function (dur) {
-            var bid = uid();
+          var dur = 0;
+          return mediaDuration(f, isVideo).then(function (d) {
+            dur = d;
+            return isVideo ? videoPoster(f) : null;
+          }).then(function (pb) {
+            var bid = uid(), tid = pb ? uid() : (isVideo ? bid : null);
             var rec = {
               id: uid(), exId: exAt, kind: kind,
-              blobId: bid, thumbId: isVideo ? bid : null,
+              blobId: bid, thumbId: tid,
               mime: f.type || (isVideo ? "video/mp4" : "audio/mp4"),
               memo: "", tags: tAt.slice(), fav: false,
               durMs: dur, bytes: f.size || 0,
               name: f.name || "",
               createdAt: Date.now() + n
             };
-            return DB.putMany([
-              ["blobs", { id: bid, blob: f }],
-              ["items", rec]
-            ]).then(function () {
+            var rows = [["blobs", { id: bid, blob: f }], ["items", rec]];
+            if (pb) rows.unshift(["blobs", { id: tid, blob: pb }]);
+            return DB.putMany(rows).then(function () {
               if (exAt === curEx) items.push(rec);
               if (browseAll) browseAll.push(rec);
               added.push(rec.id);
@@ -6342,7 +6438,7 @@
     /* 見た目は、このアカウントの中でいちばん最後に変えたものに合わせる。
        どちらの端末が偉いということはない。時刻だけで決める */
     var bestAt = lookAt(), bestLook = null, bestDev = devId();
-    var faceBest = faceAt(), faceWin = null;
+    var faceBest = faceAt(), faceWin = null, faceCands = [];
     /* 広告：いちばん最後に消した・戻した端末に合わせる。
        同じ時刻なら「消してある」ほうを採る（買った人を裏切らない） */
     var payAt = adAt(), payWin = adFree() ? 1 : 0;
@@ -6359,6 +6455,7 @@
       /* 丸の絵は別勘定。「絵を消した」も新しければ伝わるので、
          無い（""）ことも答えのうちとして持っておく */
       var fat = Number(ix.faceAt || 0);
+      if (fat) faceCands.push({ f: ix.face || "", at: fat });
       if (fat > faceBest) {
         faceBest = fat;
         faceWin = ix.face || "";
@@ -6433,6 +6530,21 @@
         .map(function (id) { return ["blobs", id]; });
       return drop.length ? DB.dropRaw(drop, []) : null;
     }).then(function () {
+      /* 丸の絵の勝ち札が、置き場に実物の無い絵を指していないか先に見る。
+         入れ直す前の端末の目録などが残っていると、取りに行っては失敗し続け、
+         どの端末の絵にもそろわないまま止まってしまう */
+      if (!faceWin || !isSkin(faceWin)) return null;
+      if (skinVerOf(faceWin) && skinVer("me") === skinVerOf(faceWin)) return null;
+      return Shelf.listMany(place.partsAll).then(function (rows) {
+        var have = {};
+        rows.forEach(function (f) { have[f.name] = 1; });
+        if (have[faceWin]) return;
+        var alt = faceCands.filter(function (c) {
+          return c.at > faceAt() && (c.f === "" ? false : !!have[c.f]);
+        }).sort(function (a, b) { return b.at - a.at; })[0];
+        if (alt) { faceWin = alt.f; faceBest = alt.at; } else { faceWin = null; }
+      }).catch(function () {});
+    }).then(function () {
       progress(74);
       /* 3. 足りない写真・録音・書類を取り寄せる */
       var want = partIds(kept);
@@ -6461,7 +6573,8 @@
       var type = {};
       kept.forEach(function (it) {
         if (it.blobId) type[it.blobId] = it.mime || "application/octet-stream";
-        if (it.thumbId) type[it.thumbId] = "image/jpeg";
+        /* 古い動画は表紙と本体が同じ番号。本体を JPEG と思い込まないように */
+        if (it.thumbId && it.thumbId !== it.blobId) type[it.thumbId] = "image/jpeg";
         if (it.origId) type[it.origId] = it.mime || "application/octet-stream";
       });
       lookSkinIds(bestLook || readPrefs()).forEach(function (id) { type[id] = "image/jpeg"; });
