@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "119";
+  var APPVER = "120";
 
   /* ============================================================
      小道具
@@ -6704,7 +6704,12 @@
   function sweepMine(rows, mine) {
     var ours = (rows || []).filter(function (f) { return f.name === mine; });
     if (ours.length < 2) return Promise.resolve(0);
-    ours.sort(function (a, b) { return (a.madeAt || 0) - (b.madeAt || 0); });
+    /* 残すのは「いちばん最近書いたもの」。
+       前は「いちばん古く作ったもの」を残していた。「同期」フォルダが二つあり、
+       自分の記録が二つめのほうで先に作られていると、送るたびに一つめへ書いた
+       新しい記録を、取り込むたびに自分で消していた。ほかの端末からは
+       古い記録しか見えず、写真もアイコンも届かなくなっていた */
+    ours.sort(function (a, b) { return (b.at || 0) - (a.at || 0) || (b.madeAt || 0) - (a.madeAt || 0); });
     var old = ours.slice(1), n = 0, i = 0;
     return (function next() {
       if (i >= old.length) return Promise.resolve(n);
