@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "117";
+  var APPVER = "118";
 
   /* ============================================================
      小道具
@@ -6254,13 +6254,25 @@
         return Shelf.listMany(p.syncs).then(function (rows) {
           out.devs = rows.filter(function (f) { return /\.json$/.test(f.name); })
             .map(function (f) {
-              return { dev: f.name.replace(/\.json$/, ""), at: f.at, size: f.size };
+              return { dev: f.name.replace(/\.json$/, ""), at: f.at, size: f.size, fileId: f.fileId };
             }).sort(function (a, b) { return b.at - a.at; });
           return Shelf.listMany(p.partsAll);
         });
       }).then(function (rows) {
         out.parts = rows.length;
-        return out;
+        var have = {};
+        rows.forEach(function (f) { have[f.name] = 1; });
+        /* それぞれの端末が「いまのアイコン」として書いている絵と、その実物があるか */
+        var i = 0;
+        return (function next() {
+          if (i >= out.devs.length) return out;
+          var d = out.devs[i++];
+          return Shelf.get(d.fileId).then(function (b) { return b.text(); }).then(function (t) {
+            var ix = JSON.parse(t);
+            d.face = ix.face || ""; d.faceAt = Number(ix.faceAt || 0);
+            d.faceHere = !d.face || !!have[d.face];
+          }).catch(function () {}).then(next);
+        })();
       });
     });
   }
@@ -6346,8 +6358,11 @@
       rows.forEach(function (f) { there[f.name] = 1; });
       /* 見た目に使う画像も、写真と同じ置き場へ。
          これが無いと、設定だけ届いて背景やアイコンが出ない */
-      var want = partIds(rec.items);
-      skinIds(readPrefs()).forEach(function (id) {
+      /* 見た目の絵（アイコン・背景）は小さいので、写真より先に上げる。
+         写真が何十枚もあると、上げ終わる前にほかの端末が取りにきて、
+         絵だけ間に合わないことがあった */
+      var want = skinIds(readPrefs()).slice();
+      partIds(rec.items).forEach(function (id) {
         if (want.indexOf(id) < 0) want.push(id);
       });
       need = want.filter(function (id) { return !there[id]; });
@@ -6438,7 +6453,7 @@
     /* 見た目は、このアカウントの中でいちばん最後に変えたものに合わせる。
        どちらの端末が偉いということはない。時刻だけで決める */
     var bestAt = lookAt(), bestLook = null, bestDev = devId();
-    var faceBest = faceAt(), faceWin = null, faceCands = [];
+    var faceBest = faceAt(), faceWin = null, faceCands = [], faceDev = "";
     /* 広告：いちばん最後に消した・戻した端末に合わせる。
        同じ時刻なら「消してある」ほうを採る（買った人を裏切らない） */
     var payAt = adAt(), payWin = adFree() ? 1 : 0;
@@ -6455,10 +6470,11 @@
       /* 丸の絵は別勘定。「絵を消した」も新しければ伝わるので、
          無い（""）ことも答えのうちとして持っておく */
       var fat = Number(ix.faceAt || 0);
-      if (fat) faceCands.push({ f: ix.face || "", at: fat });
+      if (fat) faceCands.push({ f: ix.face || "", at: fat, dev: String(ix.dev || "") });
       if (fat > faceBest) {
         faceBest = fat;
         faceWin = ix.face || "";
+        faceDev = String(ix.dev || "");
       } else if (fat === faceBest && fat > 0 && (ix.face || "") && !faceNow() && !faceWin) {
         /* 同じ時刻なら、絵を持っているほうを採る。
            こちらが空のまま、すれ違い続けるのを防ぐ */
@@ -6539,6 +6555,12 @@
         var have = {};
         rows.forEach(function (f) { have[f.name] = 1; });
         if (have[faceWin]) return;
+        /* 上げている途中かもしれない。こちらより新しいのに実物がまだ無い絵を
+           指している目録は、どれも「読んだ」にせず、次にまた見る */
+        out.faceWait = {};
+        faceCands.forEach(function (c) {
+          if (c.at > faceAt() && c.f && !have[c.f]) out.faceWait[c.dev] = 1;
+        });
         var alt = faceCands.filter(function (c) {
           return c.at > faceAt() && (c.f === "" ? false : !!have[c.f]);
         }).sort(function (a, b) { return b.at - a.at; })[0];
@@ -6718,7 +6740,10 @@
          写真が1枚でも取り寄せられていないときは控えない。
          控えてしまうと「変わっていない」と見なして二度と降ろしにいかず、
          その写真はずっと出てこないままになる */
-      if (!out.miss) fresh.forEach(function (f) { remember("seen:" + f.name, String(f.at)); });
+      if (!out.miss) fresh.forEach(function (f) {
+        if (out.faceWait && out.faceWait[f.name.replace(/\.json$/, "")]) return;
+        remember("seen:" + f.name, String(f.at));
+      });
       return reloadAll().then(function () { return out; });
     });
   }
@@ -7368,10 +7393,14 @@
             + (r.devs.length
                 ? "<ul>" + r.devs.map(function (d) {
                     return "<li>" + esc(names[d.dev] || (d.dev === devId() ? deviceName() : "別の端末"))
-                      + "（" + esc(d.dev) + "）・" + whenTxt(d.at) + "・" + mb(d.size) + "</li>";
+                      + "（" + esc(d.dev) + "）・" + whenTxt(d.at) + "・" + mb(d.size)
+                      + (d.faceAt ? "<br>アイコン：" + esc(String(d.face || "なし").replace("skin_me~", "")) + "・"
+                        + whenTxt(d.faceAt) + (d.face ? (d.faceHere ? "・実物あり" : "・<b>実物なし</b>") : "") : "")
+                      + "</li>";
                   }).join("") + "</ul>"
                 : "")
             + "<p>置かれている写真の数：<b>" + r.parts + "</b></p>"
+            + "<p>この端末のアイコン：" + esc(skinVer("me") || "なし") + "・" + (faceAt() ? whenTxt(faceAt()) : "—") + "</p>"
             + "</div>";
         }).catch(function (e) {
           if ($("tmProbeOut")) $("tmProbeOut").innerHTML =
