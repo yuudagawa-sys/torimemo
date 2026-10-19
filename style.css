@@ -2299,3 +2299,7 @@ input.inp[type="date"]{
   -webkit-appearance:none; appearance:none; display:block;
   width:100%; max-width:100%; min-width:0; box-sizing:border-box;
 }
+
+/* インスタント風の下書き。影を付けて、紙が1枚あるように見せる */
+.instpv{display:grid; place-items:center; padding:14px 0 6px}
+.instpv canvas{width:auto; max-width:72%; max-height:52vh; height:auto; box-shadow:0 6px 18px rgba(0,0,0,.18); border-radius:2px}

@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "115";
+  var APPVER = "116";
 
   /* ============================================================
      小道具
@@ -5145,7 +5145,8 @@
           + 'role="button" tabindex="0" aria-label="大きく見る">'
           + stepArrows() + "</div>"
           + '<div class="fxrow" style="margin-top:6px">'
-          + '<button class="ghost" id="mFix">写真を直す</button>'
+          + '<button class="ghost" id="mFix">編集する</button>'
+          + '<button class="ghost" id="mInst">インスタント風</button>'
           + (it.origId ? '<button class="ghost" id="mUnfix">元に戻す</button>' : "")
           + "</div>";
       }
@@ -5191,6 +5192,14 @@
         var t = $("mMemo");
         if (t && t.value !== (it.memo || "")) save({ memo: t.value });
         fixSheet(it, function () { openItem(it.id); });
+      };
+      var ins = $("mInst");
+      if (ins) ins.onclick = function () {
+        clearTimeout(saveTimer);
+        var t = $("mMemo"), memo = t ? t.value : (it.memo || "");
+        if (t && t.value !== (it.memo || "")) save({ memo: t.value });
+        var nm = safeName((exById(it.exId) || {}).name) + "_" + pad2(pos) + "_インスタント.jpg";
+        instSheet(it, memo, nm, function () { openItem(it.id); });
       };
       var ufx = $("mUnfix");
       if (ufx) ufx.onclick = function () {
@@ -5383,6 +5392,149 @@
     { k: "l169", t: "16:9", r: 16 / 9 }
   ];
 
+  /* ============================================================
+     インスタント風に書き出す
+     ------------------------------------------------------------
+     白いフチの中に写真、下の広いところにメモ。
+     寸法は、よくあるインスタント写真の比（mm）をそのまま使う。
+     「チェキ」「ポラロイド」は商標なので、呼び名には使わない。
+     ============================================================ */
+  var INST_SHAPES = [
+    { k: "tall", t: "縦長",   card: [54, 86], side: 4,   top: 5,   photo: [46, 62] },
+    { k: "sq",   t: "正方形", card: [88, 107], side: 4.5, top: 4.5, photo: [79, 79] }
+  ];
+  var INST_FACES = [
+    { k: "hand",   t: "手書き",   f: "'Yomogi', 'Klee One', cursive" },
+    { k: "mincho", t: "明朝",     f: "'Zen Old Mincho', 'Hiragino Mincho ProN', serif" },
+    { k: "gothic", t: "ゴシック", f: "'Zen Kaku Gothic New', 'Hiragino Sans', sans-serif" },
+    { k: "maru",   t: "丸文字",   f: "'Zen Maru Gothic', 'Hiragino Maru Gothic ProN', sans-serif" }
+  ];
+  /* 手書きと丸文字は、使うときだけ読み込む。ふだんの起動を重くしない */
+  var instFontsAt = null;
+  function instFonts() {
+    if (instFontsAt) return instFontsAt;
+    instFontsAt = new Promise(function (ok) {
+      var l = document.createElement("link");
+      l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=Yomogi&family=Zen+Maru+Gothic:wght@500&display=swap";
+      l.onload = ok; l.onerror = ok;
+      setTimeout(ok, 4000);
+      document.head.appendChild(l);
+    });
+    return instFontsAt;
+  }
+  function pickOf(list, k) {
+    for (var i = 0; i < list.length; i++) if (list[i].k === k) return list[i];
+    return list[0];
+  }
+  /* 1枚に描く。W は横の画素数 */
+  function drawInst(im, shape, face, text, W) {
+    var mm = W / shape.card[0];
+    var H = Math.round(shape.card[1] * mm);
+    var cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    var g = cv.getContext("2d");
+    g.fillStyle = "#fbfaf6";
+    g.fillRect(0, 0, W, H);
+    /* 写真は枠いっぱいに。はみ出すぶんは切る */
+    var px = shape.side * mm, py = shape.top * mm;
+    var pw = shape.photo[0] * mm, ph = shape.photo[1] * mm;
+    var nw = im.naturalWidth || 1, nh = im.naturalHeight || 1;
+    var sc = Math.max(pw / nw, ph / nh);
+    var sw = pw / sc, sh = ph / sc;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(im, (nw - sw) / 2, (nh - sh) / 2, sw, sh, px, py, pw, ph);
+    /* 下の広いところに文字。入りきらなければ小さくする */
+    var t = String(text || "").trim();
+    if (t) {
+      var bx = shape.side * mm, bw = W - bx * 2;
+      var top = py + ph, bh = H - top;
+      var fs = bh * 0.2, lines = [], lead = 1.45;
+      for (var n = 0; n < 12; n++) {
+        g.font = "500 " + Math.round(fs) + "px " + face.f;
+        lines = wrapText(g, t, bw * 0.92);
+        if (lines.length * fs * lead <= bh * 0.84) break;
+        fs *= 0.88;
+      }
+      g.fillStyle = "#2b2a28";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      var y0 = top + bh / 2 - (lines.length - 1) * fs * lead / 2;
+      lines.forEach(function (ln, i) { g.fillText(ln, W / 2, y0 + i * fs * lead); });
+    }
+    return cv;
+  }
+  function instSheet(it, memo, fileName, after) {
+    var src = urlCache[it.blobId] || urlCache[it.thumbId] || "";
+    var st = { shape: recall("inst.shape") || "tall", face: recall("inst.face") || "hand" };
+    function seg(id, list, cur) {
+      return '<div class="segrow" id="' + id + '">' + list.map(function (x) {
+        return '<button class="seg" data-v="' + x.k + '" aria-pressed="' + (x.k === cur) + '">'
+          + esc(x.t) + "</button>";
+      }).join("") + "</div>";
+    }
+    sheet('<div class="panel-head"><h3>インスタント風</h3>'
+      + '<div style="display:flex;gap:8px">'
+      + '<button class="iconbtn" id="isNo" aria-label="もどる"><svg><use href="#i-back"/></svg></button>'
+      + '<button class="iconbtn ok" id="isOk" aria-label="書き出す" title="書き出す"><svg><use href="#i-check"/></svg></button>'
+      + "</div></div>"
+      + '<div class="panel-body"><div class="stack">'
+      + '<div class="instpv"><canvas id="isPv"></canvas></div>'
+      + '<div class="label">形</div>' + seg("isShape", INST_SHAPES, st.shape)
+      + '<div class="label" style="margin-top:8px">書体</div>' + seg("isFace", INST_FACES, st.face)
+      + '<div class="field"><label class="label" for="isText">文字</label>'
+      + '<textarea class="ta" id="isText" rows="3">' + esc(memo || "") + "</textarea></div>"
+      + "</div></div>", "dialog");
+    noAutofill($("panel"));
+
+    var im = new Image(), ready = false;
+    function draw() {
+      if (!ready) return;
+      var face = pickOf(INST_FACES, st.face), shape = pickOf(INST_SHAPES, st.shape);
+      var go = function () {
+        var pv = $("isPv");
+        if (!pv) return;
+        var cv = drawInst(im, shape, face, $("isText").value, 720);
+        pv.width = cv.width; pv.height = cv.height;
+        pv.getContext("2d").drawImage(cv, 0, 0);
+      };
+      go();
+      /* 書体が届いたら描き直す */
+      var fam = face.f.split(",")[0];
+      if (document.fonts && document.fonts.load) {
+        document.fonts.load("500 40px " + fam, $("isText").value || "あ").then(go, function () {});
+      }
+    }
+    im.onload = function () { ready = true; draw(); };
+    im.src = src;
+    instFonts().then(draw);
+
+    function wire(id, key) {
+      Array.prototype.forEach.call($(id).querySelectorAll("[data-v]"), function (bt) {
+        bt.onclick = function () {
+          st[key] = bt.getAttribute("data-v");
+          remember("inst." + key, st[key]);
+          Array.prototype.forEach.call($(id).querySelectorAll("[data-v]"), function (x) {
+            x.setAttribute("aria-pressed", String(x === bt));
+          });
+          draw();
+        };
+      });
+    }
+    wire("isShape", "shape"); wire("isFace", "face");
+    var tt = null;
+    $("isText").oninput = function () { clearTimeout(tt); tt = setTimeout(draw, 150); };
+    $("isNo").onclick = function () { closeSheet(); if (after) after(); };
+    $("isOk").onclick = function () {
+      if (!ready) return;
+      var face = pickOf(INST_FACES, st.face), shape = pickOf(INST_SHAPES, st.shape);
+      var cv = drawInst(im, shape, face, $("isText").value, 1600);
+      toJpeg(cv, 0.92).then(function (bl) { return handOver(bl, fileName); })
+        .then(function (how) { if (how !== "cancel") toast("書き出しました"); })
+        .catch(function (e) { toast(why(e), true); });
+    };
+  }
+
   function fixSheet(it, after) {
     if (!it || it.kind !== "photo" || !it.blobId) return;
 
@@ -5458,7 +5610,7 @@
       }).join("");
     }
 
-    sheet('<div class="panel-head"><h3>写真を直す</h3>'
+    sheet('<div class="panel-head"><h3>編集する</h3>'
       + '<div style="display:flex;gap:8px">'
       + '<button class="iconbtn" id="fxNo" aria-label="やめる"><svg><use href="#i-back"/></svg></button>'
       + '<button class="iconbtn ok" id="fxOk" aria-label="これで保存"><svg><use href="#i-check"/></svg></button>'
@@ -7199,10 +7351,10 @@
           + "<p>フォルダを開いて、" + plusWhere() + "<b>＋</b>から 撮る・写真・音声・動画・書類・メモ。"
           + "数の上限はありません。手が離せないときは、声で残せます。</p>")
 
-      + qa("並べ替えと、写真を直す",
+      + qa("並べ替えと、写真を編集する",
           "<p>タイルを<b>長押ししてから指を動かす</b>と、好きな順に並べ替えられます。</p>"
           + "<p>左上に来たものが、そのままホームでのフォルダの<b>表紙</b>になります。</p>"
-          + "<p>写真を開いて<b>直す</b>を押すと、回す・切り取る・明るさを変えられます。"
+          + "<p>写真を開いて<b>編集する</b>を押すと、回す・切り取る・明るさを変えられます。"
           + "元の写真は残してあるので、いつでも<b>元に戻す</b>が効きます。</p>")
 
       + qa("さがす",
