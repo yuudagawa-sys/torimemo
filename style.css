@@ -2003,7 +2003,7 @@ label.mebig{cursor:pointer}
 }
 
 /* ================= フォルダの「…」（長押しと同じ選択肢） ================= */
-.frowwrap, .fsqwrap{position:relative}
+.frowwrap, .fsqwrap, .bdwrap{position:relative}
 .fmore{
   position:absolute; z-index:2;
   display:grid; place-items:center;
@@ -2023,15 +2023,15 @@ label.mebig{cursor:pointer}
 .frowwrap .fmore{right:9px; top:50%; transform:translateY(-50%)}
 .frowwrap .fmore:active{transform:translateY(-50%) scale(.92)}
 .frowwrap .folderrow{padding-right:46px}
-.fsqwrap .fmore{
+.fsqwrap .fmore, .bdwrap .fmore{
   right:6px; top:6px;
   background:rgba(255,255,255,.26); border-color:rgba(255,255,255,.3); color:#333;
   text-shadow:0 1px 2px rgba(255,255,255,.5);
 }
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .fsqwrap .fmore{background:rgba(20,26,24,.3); color:#DCE9E3; border-color:rgba(255,255,255,.14); text-shadow:0 1px 2px rgba(0,0,0,.45)}
+  :root:not([data-theme="light"]) .fsqwrap .fmore, :root:not([data-theme="light"]) .bdwrap .fmore{background:rgba(20,26,24,.3); color:#DCE9E3; border-color:rgba(255,255,255,.14); text-shadow:0 1px 2px rgba(0,0,0,.45)}
 }
-:root[data-theme="dark"] .fsqwrap .fmore{background:rgba(20,26,24,.3); color:#DCE9E3; border-color:rgba(255,255,255,.14); text-shadow:0 1px 2px rgba(0,0,0,.45)}
+:root[data-theme="dark"] .fsqwrap .fmore, :root[data-theme="dark"] .bdwrap .fmore{background:rgba(20,26,24,.3); color:#DCE9E3; border-color:rgba(255,255,255,.14); text-shadow:0 1px 2px rgba(0,0,0,.45)}
 
 /* ================= 同期しているあいだ、回っていることを見せる =================
    初回は写真が何十枚もあって何分もかかる。止まっているのか
@@ -2300,6 +2300,3 @@ input.inp[type="date"]{
   width:100%; max-width:100%; min-width:0; box-sizing:border-box;
 }
 
-/* インスタント風の下書き。影を付けて、紙が1枚あるように見せる */
-.instpv{display:grid; place-items:center; padding:14px 0 6px}
-.instpv canvas{width:auto; max-width:72%; max-height:52vh; height:auto; box-shadow:0 6px 18px rgba(0,0,0,.18); border-radius:2px}
