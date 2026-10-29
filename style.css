@@ -2355,3 +2355,12 @@ html.fxopen, html.fxopen body{overflow:hidden}
 .fxfr i[data-h="sw"]{left:-4px; bottom:-4px; border-right:0; border-top:0; cursor:nesw-resize}
 .fxfr i[data-h="se"]{right:-4px; bottom:-4px; border-left:0; border-top:0; cursor:nwse-resize}
 .fxfr i::before{content:""; position:absolute; inset:-12px}
+/* 余白の色：好きな色（色の選び画面）とスポイト */
+.fxsegs .fxany{
+  flex:0 0 auto; position:relative; display:flex; align-items:center; gap:6px;
+  background:#1e1e20; color:#e8e8e8; border:1px solid #333; border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer;
+}
+.fxsegs .fxany[aria-pressed="true"]{border-color:#f2f2f2}
+.fxsegs .fxany input{position:absolute; inset:0; opacity:0; width:100%; height:100%; cursor:pointer}
+.fxchip{width:14px; height:14px; border-radius:50%; border:1px solid rgba(255,255,255,.5); display:inline-block}
+.fxbox.picking{cursor:crosshair}

@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "124";
+  var APPVER = "125";
 
   /* ============================================================
      小道具
@@ -5650,7 +5650,7 @@
       { k: "con",  t: "くっきり", ic: "i-contrast" },
       { k: "pad",  t: "余白",     ic: "i-frame" }
     ];
-    var tool = "cut";
+    var tool = "cut", picking = false;
     var full = document.createElement("div");
     full.className = "fxfull";
     full.id = "fxFull";
@@ -5708,8 +5708,16 @@
       } else if (tool === "con") {
         html = '<div class="fxline">' + slider("fxCon", 60, 180, con) + "</div>";
       } else {
-        html = '<div class="segs fxsegs" id="fxPadCol">' + segRow(PAD_COLORS, padCol, "pc") + "</div>"
-          + '<div class="fxline"><span>太さ</span>' + slider("fxPad", 0, 25, pad) + "</div>";
+        /* 余白の色：白・黒のほか、写真の中から拾う（スポイト）か、好きな色を選ぶ */
+        var preset = padCol === "#ffffff" || padCol === "#000000";
+        html = '<div class="segs fxsegs" id="fxPadCol">' + segRow(PAD_COLORS, padCol, "pc")
+          + '<button id="fxPick" aria-pressed="' + picking + '">スポイト</button>'
+          + '<label class="fxany" aria-pressed="' + (!preset && !picking) + '">'
+          + '<span class="fxchip" style="background:' + padCol + '"></span>好きな色'
+          + '<input type="color" id="fxColor" value="' + padCol + '"></label>'
+          + "</div>"
+          + (picking ? '<div class="fxline"><span>写真の色を押す</span></div>'
+                     : '<div class="fxline"><span>太さ</span>' + slider("fxPad", 0, 25, pad) + "</div>");
       }
       pn.innerHTML = html;
       Array.prototype.forEach.call(document.querySelectorAll("#fxTools [data-tool]"), function (b) {
@@ -5725,8 +5733,12 @@
         };
       });
       Array.prototype.forEach.call(pn.querySelectorAll("[data-pc]"), function (b) {
-        b.onclick = function () { padCol = b.getAttribute("data-pc"); if (!pad) pad = 6; showTool(); paintFix(); };
+        b.onclick = function () { padCol = b.getAttribute("data-pc"); picking = false; if (!pad) pad = 6; showTool(); paintFix(); };
       });
+      var pk = $("fxPick"); if (pk) pk.onclick = function () { picking = !picking; if (!pad) pad = 6; showTool(); paintFix(); };
+      var cl = $("fxColor"); if (cl) cl.oninput = function () { padCol = this.value; picking = false; if (!pad) pad = 6; paintFix();
+        var ch = full.querySelector(".fxchip"); if (ch) ch.style.background = padCol; };
+      if (cl) cl.onchange = function () { showTool(); };
       var z = $("fxZoom"); if (z) z.oninput = function () { st.s = parseInt(this.value, 10) / 100; paintFix(); };
       var bi = $("fxBri"); if (bi) bi.oninput = function () { bri = parseInt(this.value, 10); paintFix(); };
       var ci = $("fxCon"); if (ci) ci.oninput = function () { con = parseInt(this.value, 10); paintFix(); };
@@ -5740,7 +5752,7 @@
       paintFix();
     }
     Array.prototype.forEach.call(document.querySelectorAll("#fxTools [data-tool]"), function (b) {
-      b.onclick = function () { tool = b.getAttribute("data-tool"); showTool(); paintFix(); };
+      b.onclick = function () { tool = b.getAttribute("data-tool"); picking = false; showTool(); paintFix(); };
     });
 
     /* 自由の枠を動かしているあいだは、写真全体を出して枠を重ねる */
@@ -5763,6 +5775,7 @@
       box.style.width = (W + 2 * M) + "px";
       box.style.height = (H + 2 * M) + "px";
       box.classList.toggle("nogrid", !!M || editing);
+      box.classList.toggle("picking", picking);
       var dpr = Math.min(2, window.devicePixelRatio || 1);
       cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
       cv.style.width = W + "px"; cv.style.height = H + "px";
@@ -5794,7 +5807,7 @@
     $("fxNo").onclick = cancel;
     $("fxReset").onclick = function () {
       rot = 0; bri = 100; con = 100; cut = "as"; st = { s: 1, x: 0, y: 0 };
-      fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; pad = 0; padCol = "#ffffff";
+      fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; pad = 0; padCol = "#ffffff"; picking = false;
       showTool();
       paintFix();
     };
@@ -5804,6 +5817,21 @@
        それ以外：写真をずらす、2本指でつまむと大きさ */
     var pts = {}, base = null, drag = null, MIN = 0.08;
     box.addEventListener("pointerdown", function (e) {
+      /* スポイト：押したところの色を、余白の色にする */
+      if (picking) {
+        var rc = cv.getBoundingClientRect();
+        var px = Math.round((e.clientX - rc.left) * cv.width / rc.width);
+        var py = Math.round((e.clientY - rc.top) * cv.height / rc.height);
+        if (px >= 0 && py >= 0 && px < cv.width && py < cv.height) {
+          try {
+            var d = cv.getContext("2d").getImageData(px, py, 1, 1).data;
+            padCol = "#" + [d[0], d[1], d[2]].map(function (v) { return ("0" + v.toString(16)).slice(-2); }).join("");
+          } catch (er) {}
+          picking = false;
+          showTool(); paintFix();
+        }
+        return;
+      }
       box.setPointerCapture(e.pointerId);
       pts[e.pointerId] = { x: e.clientX, y: e.clientY }; base = null;
       drag = null;
