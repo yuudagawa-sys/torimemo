@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "123";
+  var APPVER = "124";
 
   /* ============================================================
      小道具
@@ -5536,38 +5536,53 @@
     { k: "l169", t: "16:9", r: 16 / 9 }
   ];
 
+  /* 写真の編集で選べる切り抜き。クリップボードのトリミング（CUTS）とは別に持つ。
+     「4:5」のような比では分かりにくいので、縦・横・正方形の言葉にする */
+  var FX_CUTS = [
+    { k: "as",   t: "そのまま", r: 0 },
+    { k: "free", t: "自由",     r: -1 },
+    { k: "tall", t: "縦",       r: 3 / 4 },
+    { k: "wide", t: "横",       r: 4 / 3 },
+    { k: "sq",   t: "正方形",   r: 1 }
+  ];
+  var PAD_COLORS = [{ k: "#ffffff", t: "白" }, { k: "#000000", t: "黒" }];
+
   function fixSheet(it, after) {
     if (!it || it.kind !== "photo" || !it.blobId) return;
 
     var rot = 0, bri = 100, con = 100, cut = "as";
     var st = { s: 1, x: 0, y: 0 };
+    /* 自由のときの枠。回したあとの写真に対する割合で持つ */
+    var fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
+    /* 余白。写真の長いほうの辺に対する%。色は白か黒 */
+    var pad = 0, padCol = "#ffffff";
     var im = null, nat = { w: 0, h: 0 };
 
     /* 回したあとの、元画像の向き */
     function srcW() { return rot % 180 === 0 ? nat.w : nat.h; }
     function srcH() { return rot % 180 === 0 ? nat.h : nat.w; }
-
     function ratio() {
-      for (var i = 0; i < CUTS.length; i++) if (CUTS[i].k === cut) return CUTS[i].r;
+      for (var i = 0; i < FX_CUTS.length; i++) if (FX_CUTS[i].k === cut) return FX_CUTS[i].r;
       return 0;
     }
-    /* 仕上がりの縦横。そのままなら回したあとの形をそのまま使う */
-    function outSize() {
-      var r = ratio();
-      var edge = Math.min(photoSize().edge, Math.max(srcW(), srcH()));
-      if (!r) {
-        var k = edge / Math.max(srcW(), srcH());
-        return { w: Math.round(srcW() * k), h: Math.round(srcH() * k) };
+    function isFree() { return cut === "free"; }
+
+    /* 写真の部分（余白を除く）の仕上がりの縦横。
+       切り抜きで実際に使える画素を超えて大きくはしない（元にない細かさを水増ししない） */
+    function innerSize() {
+      var r = ratio(), aw, ah;
+      if (isFree()) { aw = fr.w * srcW(); ah = fr.h * srcH(); }
+      else if (r <= 0) { aw = srcW(); ah = srcH(); }
+      else {
+        var sr = srcW() / srcH();
+        aw = r >= sr ? srcW() : srcH() * r;
+        ah = aw / r;
       }
-      /* 切り抜きで実際に使える画素はここまで。これを超えて大きくすると、
-         元にない細かさを水増しすることになるので、上限にする */
-      var sr = srcW() / srcH();
-      var aw = r >= sr ? srcW() : srcH() * r;
-      var ah = aw / r;
       var long = Math.max(aw, ah);
       var k = Math.min(photoSize().edge, long) / long;
       return { w: Math.max(1, Math.round(aw * k)), h: Math.max(1, Math.round(ah * k)) };
     }
+    function padPx(w, h) { return Math.round(Math.max(w, h) * pad / 100); }
 
     function clampST(W, H) {
       var cover = Math.max(W / srcW(), H / srcH()), s = cover * st.s;
@@ -5578,17 +5593,32 @@
       st.y = Math.max(-my, Math.min(my, st.y));
     }
 
-    /* 下書きも仕上がりもこれ。明るさはここでは触らない */
-    function render(g, W, H) {
-      var cover = Math.max(W / srcW(), H / srcH()), s = cover * st.s;
+    /* 枠いっぱいに写真を置く（指でずらす・つまむの分も入れて）。明るさはここでは触らない */
+    function render(g, W, H, q) {
+      var p = q || st;
+      var cover = Math.max(W / srcW(), H / srcH()), s = cover * p.s;
       g.clearRect(0, 0, W, H);
       g.save();
       g.imageSmoothingQuality = "high";
-      g.translate(W / 2 + st.x * W, H / 2 + st.y * H);
+      g.translate(W / 2 + p.x * W, H / 2 + p.y * H);
       g.rotate(rot * Math.PI / 180);
       g.drawImage(im, -nat.w * s / 2, -nat.h * s / 2, nat.w * s, nat.h * s);
       g.restore();
     }
+    /* 自由の枠で切った部分だけを、W×H に描く */
+    function renderFree(g, W, H) {
+      var k = W / (fr.w * srcW());
+      g.clearRect(0, 0, W, H);
+      g.save();
+      g.imageSmoothingQuality = "high";
+      g.translate(-fr.x * srcW() * k, -fr.y * srcH() * k);
+      g.scale(k, k);
+      g.translate(srcW() / 2, srcH() / 2);
+      g.rotate(rot * Math.PI / 180);
+      g.drawImage(im, -nat.w / 2, -nat.h / 2, nat.w, nat.h);
+      g.restore();
+    }
+    function renderInner(g, W, H) { if (isFree()) renderFree(g, W, H); else render(g, W, H); }
 
     /* 明るさとコントラスト。下書きはCSSに任せ、仕上がりだけ自前で計算する。
        canvas の filter は古いiPhoneで効かないことがあるため */
@@ -5604,9 +5634,9 @@
       g.putImageData(d, 0, 0);
     }
 
-    function cutRow() {
-      return CUTS.map(function (c) {
-        return '<button data-cut="' + c.k + '" aria-pressed="' + (c.k === cut) + '">'
+    function segRow(list, cur, attr) {
+      return list.map(function (c) {
+        return '<button data-' + attr + '="' + c.k + '" aria-pressed="' + (c.k === cur) + '">'
           + esc(c.t) + "</button>";
       }).join("");
     }
@@ -5617,7 +5647,8 @@
       { k: "cut",  t: "切り抜き", ic: "i-crop" },
       { k: "turn", t: "回転",     ic: "i-rotate" },
       { k: "bri",  t: "明るさ",   ic: "i-sun" },
-      { k: "con",  t: "くっきり", ic: "i-contrast" }
+      { k: "con",  t: "くっきり", ic: "i-contrast" },
+      { k: "pad",  t: "余白",     ic: "i-frame" }
     ];
     var tool = "cut";
     var full = document.createElement("div");
@@ -5627,7 +5658,9 @@
     full.setAttribute("aria-label", "編集する");
     full.innerHTML = '<div class="fxtop"><button class="fxtxt" id="fxReset">はじめに戻す</button>'
       + '<span class="fxsay" id="fxSay"></span></div>'
-      + '<div class="fxstage" id="fxStage"><div class="cropbox fxbox" id="fxBox"><canvas id="fxCv"></canvas></div></div>'
+      + '<div class="fxstage" id="fxStage"><div class="cropbox fxbox" id="fxBox"><canvas id="fxCv"></canvas>'
+      + '<div class="fxfr" id="fxFr" hidden><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div>'
+      + "</div></div>"
       + '<div class="fxpanel" id="fxPanel"></div>'
       + '<div class="fxtools" id="fxTools">' + TOOLS.map(function (x) {
           return '<button data-tool="' + x.k + '"><span class="fxic"><svg><use href="#' + x.ic + '"/></svg></span>'
@@ -5638,7 +5671,7 @@
     document.body.appendChild(full);
     document.documentElement.classList.add("fxopen");
 
-    var box = $("fxBox"), cv = $("fxCv");
+    var box = $("fxBox"), cv = $("fxCv"), frEl = $("fxFr");
     function say(t, bad) {
       var e = $("fxSay");
       if (e) { e.textContent = t || ""; e.style.color = bad ? "#ff8a80" : ""; }
@@ -5665,15 +5698,18 @@
       if (!pn) return;
       var html = "";
       if (tool === "cut") {
-        html = '<div class="segs fxsegs" id="fxCuts">' + cutRow() + "</div>"
-          + '<div class="fxline"><span>大きさ</span>' + slider("fxZoom", 100, 320, Math.round(st.s * 100)) + "</div>";
+        html = '<div class="segs fxsegs" id="fxCuts">' + segRow(FX_CUTS, cut, "cut") + "</div>"
+          + (isFree() ? "" : '<div class="fxline"><span>大きさ</span>' + slider("fxZoom", 100, 320, Math.round(st.s * 100)) + "</div>");
       } else if (tool === "turn") {
         html = '<div class="fxturn"><button class="fxtxt" id="fxL">↺ 左に90°</button>'
           + '<button class="fxtxt" id="fxR">↻ 右に90°</button></div>';
       } else if (tool === "bri") {
         html = '<div class="fxline">' + slider("fxBri", 50, 160, bri) + "</div>";
-      } else {
+      } else if (tool === "con") {
         html = '<div class="fxline">' + slider("fxCon", 60, 180, con) + "</div>";
+      } else {
+        html = '<div class="segs fxsegs" id="fxPadCol">' + segRow(PAD_COLORS, padCol, "pc") + "</div>"
+          + '<div class="fxline"><span>太さ</span>' + slider("fxPad", 0, 25, pad) + "</div>";
       }
       pn.innerHTML = html;
       Array.prototype.forEach.call(document.querySelectorAll("#fxTools [data-tool]"), function (b) {
@@ -5681,35 +5717,68 @@
       });
       var nm = $("fxName");
       TOOLS.forEach(function (x) { if (x.k === tool && nm) nm.textContent = x.t; });
-      if (tool === "cut") wireCuts();
+      Array.prototype.forEach.call(pn.querySelectorAll("[data-cut]"), function (b) {
+        b.onclick = function () {
+          cut = b.getAttribute("data-cut");
+          if (isFree()) fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
+          showTool(); paintFix();
+        };
+      });
+      Array.prototype.forEach.call(pn.querySelectorAll("[data-pc]"), function (b) {
+        b.onclick = function () { padCol = b.getAttribute("data-pc"); if (!pad) pad = 6; showTool(); paintFix(); };
+      });
       var z = $("fxZoom"); if (z) z.oninput = function () { st.s = parseInt(this.value, 10) / 100; paintFix(); };
       var bi = $("fxBri"); if (bi) bi.oninput = function () { bri = parseInt(this.value, 10); paintFix(); };
       var ci = $("fxCon"); if (ci) ci.oninput = function () { con = parseInt(this.value, 10); paintFix(); };
-      var l = $("fxL"); if (l) l.onclick = function () { rot = (rot + 270) % 360; st.x = 0; st.y = 0; paintFix(); };
-      var r = $("fxR"); if (r) r.onclick = function () { rot = (rot + 90) % 360; st.x = 0; st.y = 0; paintFix(); };
+      var pd = $("fxPad"); if (pd) pd.oninput = function () { pad = parseInt(this.value, 10); paintFix(); };
+      var l = $("fxL"); if (l) l.onclick = function () { turn(270); };
+      var r = $("fxR"); if (r) r.onclick = function () { turn(90); };
+    }
+    function turn(d) {
+      rot = (rot + d) % 360; st.x = 0; st.y = 0;
+      fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
+      paintFix();
     }
     Array.prototype.forEach.call(document.querySelectorAll("#fxTools [data-tool]"), function (b) {
       b.onclick = function () { tool = b.getAttribute("data-tool"); showTool(); paintFix(); };
     });
 
+    /* 自由の枠を動かしているあいだは、写真全体を出して枠を重ねる */
+    function framing() { return isFree() && tool === "cut"; }
+
     function paintFix() {
       if (!im || !$("fxStage")) return;
-      var out = outSize();
-      /* 写真の置き場（道具を除いた残り全部）に、縦横比を保って入れる */
+      var editing = framing();
+      var inner = editing ? { w: srcW(), h: srcH() } : innerSize();
+      var m = editing ? 0 : padPx(inner.w, inner.h);
+      /* 写真の置き場（道具を除いた残り全部）に、余白ごと縦横比を保って入れる */
       var stg = $("fxStage");
       var roomW = Math.max(120, stg.clientWidth - 24), roomH = Math.max(120, stg.clientHeight - 24);
-      var W = roomW, H = Math.round(W * out.h / out.w);
-      if (H > roomH) { H = roomH; W = Math.round(H * out.w / out.h); }
-      box.style.width = W + "px";
-      box.style.height = H + "px";
+      var f = Math.min(roomW / (inner.w + 2 * m), roomH / (inner.h + 2 * m));
+      var W = Math.max(1, Math.round(inner.w * f)), H = Math.max(1, Math.round(inner.h * f));
+      var M = Math.round(m * f);
+      box.style.boxSizing = "border-box";
+      box.style.padding = M + "px";
+      box.style.background = M ? padCol : "#fff";
+      box.style.width = (W + 2 * M) + "px";
+      box.style.height = (H + 2 * M) + "px";
+      box.classList.toggle("nogrid", !!M || editing);
       var dpr = Math.min(2, window.devicePixelRatio || 1);
       cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
       cv.style.width = W + "px"; cv.style.height = H + "px";
       var g = cv.getContext("2d");
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      clampST(W, H);
-      render(g, W, H);
+      if (editing) render(g, W, H, { s: 1, x: 0, y: 0 });
+      else if (isFree()) renderFree(g, W, H);
+      else { clampST(W, H); render(g, W, H); }
       cv.style.filter = "brightness(" + bri + "%) contrast(" + con + "%)";
+      frEl.hidden = !editing;
+      if (editing) {
+        frEl.style.left = (M + fr.x * W) + "px";
+        frEl.style.top = (M + fr.y * H) + "px";
+        frEl.style.width = (fr.w * W) + "px";
+        frEl.style.height = (fr.h * H) + "px";
+      }
     }
 
     showTool();
@@ -5725,31 +5794,46 @@
     $("fxNo").onclick = cancel;
     $("fxReset").onclick = function () {
       rot = 0; bri = 100; con = 100; cut = "as"; st = { s: 1, x: 0, y: 0 };
+      fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; pad = 0; padCol = "#ffffff";
       showTool();
       paintFix();
     };
-    function wireCuts() {
-      var row = $("fxCuts");
-      if (!row) return;
-      Array.prototype.forEach.call(row.querySelectorAll("[data-cut]"), function (b) {
-        b.onclick = function () {
-          cut = b.getAttribute("data-cut");
-          row.innerHTML = cutRow(); wireCuts();
-          paintFix();
-        };
-      });
-    }
 
-    /* 指で動かす。切り抜きの枠に対する割合で覚える */
-    var pts = {}, base = null;
+    /* 指で動かす。
+       自由の枠を出しているとき：角を引くと大きさ、枠の中を引くと位置。
+       それ以外：写真をずらす、2本指でつまむと大きさ */
+    var pts = {}, base = null, drag = null, MIN = 0.08;
     box.addEventListener("pointerdown", function (e) {
       box.setPointerCapture(e.pointerId);
       pts[e.pointerId] = { x: e.clientX, y: e.clientY }; base = null;
+      drag = null;
+      if (framing()) {
+        var h = e.target.getAttribute && e.target.getAttribute("data-h");
+        if (h || e.target === frEl) drag = { h: h || "move", x: e.clientX, y: e.clientY, f: { x: fr.x, y: fr.y, w: fr.w, h: fr.h } };
+      }
     });
     box.addEventListener("pointermove", function (e) {
       if (!pts[e.pointerId]) return;
+      var W = cv.clientWidth || 1, H = cv.clientHeight || 1;
+      if (framing()) {
+        if (!drag) return;
+        var dx = (e.clientX - drag.x) / W, dy = (e.clientY - drag.y) / H, o = drag.f;
+        var x1 = o.x, y1 = o.y, x2 = o.x + o.w, y2 = o.y + o.h;
+        if (drag.h === "move") {
+          var nx = Math.max(0, Math.min(1 - o.w, o.x + dx)), ny = Math.max(0, Math.min(1 - o.h, o.y + dy));
+          fr = { x: nx, y: ny, w: o.w, h: o.h };
+        } else {
+          if (drag.h.indexOf("w") >= 0) x1 = Math.max(0, Math.min(x2 - MIN, o.x + dx));
+          if (drag.h.indexOf("e") >= 0) x2 = Math.min(1, Math.max(x1 + MIN, o.x + o.w + dx));
+          if (drag.h.indexOf("n") >= 0) y1 = Math.max(0, Math.min(y2 - MIN, o.y + dy));
+          if (drag.h.indexOf("s") >= 0) y2 = Math.min(1, Math.max(y1 + MIN, o.y + o.h + dy));
+          fr = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+        }
+        paintFix();
+        return;
+      }
+      if (isFree()) return;
       var ids = Object.keys(pts);
-      var W = box.clientWidth || 1, H = box.clientHeight || 1;
       if (ids.length === 1) {
         st.x += (e.clientX - pts[e.pointerId].x) / W;
         st.y += (e.clientY - pts[e.pointerId].y) / H;
@@ -5766,27 +5850,41 @@
       }
     });
     ["pointerup", "pointercancel"].forEach(function (k) {
-      box.addEventListener(k, function (e) { delete pts[e.pointerId]; base = null; });
+      box.addEventListener(k, function (e) { delete pts[e.pointerId]; base = null; drag = null; });
     });
+
+    /* 仕上げ。写真の部分を描いて明るさを入れ、そのまわりに余白をつける。
+       k は大きさの倍率（小さい絵を作るとき 1 より小さくする） */
+    function bake(k, q) {
+      var inner = innerSize(), m = padPx(inner.w, inner.h);
+      var iw = Math.max(1, Math.round(inner.w * k)), ih = Math.max(1, Math.round(inner.h * k));
+      var M = Math.round(m * k);
+      var ci = document.createElement("canvas");
+      ci.width = iw; ci.height = ih;
+      var gi = ci.getContext("2d");
+      renderInner(gi, iw, ih);
+      tone(gi, iw, ih);
+      var c = ci;
+      if (M) {
+        c = document.createElement("canvas");
+        c.width = iw + 2 * M; c.height = ih + 2 * M;
+        var g = c.getContext("2d");
+        g.fillStyle = padCol;
+        g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(ci, M, M);
+      }
+      return new Promise(function (res, rej) {
+        c.toBlob(function (b) { b ? res({ blob: b, w: c.width, h: c.height }) : rej(new Error("画像を作れませんでした。")); },
+                 "image/jpeg", q);
+      });
+    }
 
     $("fxOk").onclick = function () {
       if (!im) return;
       say("書き出しています…");
-      var out = outSize();
-      function bake(W, H, q) {
-        var c = document.createElement("canvas");
-        c.width = W; c.height = H;
-        var g = c.getContext("2d");
-        render(g, W, H);
-        tone(g, W, H);
-        return new Promise(function (res, rej) {
-          c.toBlob(function (b) { b ? res({ blob: b, w: W, h: H }) : rej(new Error("画像を作れませんでした。")); },
-                   "image/jpeg", q);
-        });
-      }
-      var tw = out.w >= out.h ? 400 : Math.round(400 * out.w / out.h);
-      var th = out.w >= out.h ? Math.round(400 * out.h / out.w) : 400;
-      Promise.all([bake(out.w, out.h, photoSize().q), bake(tw, th, 0.72)])
+      var inner = innerSize(), m = padPx(inner.w, inner.h);
+      var long = Math.max(inner.w, inner.h) + 2 * m;
+      Promise.all([bake(1, photoSize().q), bake(Math.min(1, 400 / long), 0.72)])
         .then(function (r) { return saveFixed(it, r[0], r[1]); })
         .then(function () { fxClose(); toast("直しました"); if (after) after(); })
         .catch(function (e) { say(why(e), true); });

@@ -2344,3 +2344,14 @@ html.fxopen, html.fxopen body{overflow:hidden}
 .fxtools button[aria-pressed="true"] .fxic{border-color:#f2f2f2; background:#1e1e20}
 .fxbar{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; padding:2px 6px 8px; border-top:1px solid #1f1f21}
 .fxbar b{font-size:14px; font-weight:600}
+.fxbox.nogrid::after{display:none}
+.fxbox canvas{display:block}
+/* 自由の切り抜きの枠。外側を暗くし、四つの角を引いて大きさを変える */
+.fxfr{position:absolute; border:1.5px solid #fff; box-shadow:0 0 0 9999px rgba(0,0,0,.55); touch-action:none; cursor:move; z-index:2}
+.fxfr[hidden]{display:none}
+.fxfr i{position:absolute; width:26px; height:26px; border:3px solid #fff}
+.fxfr i[data-h="nw"]{left:-4px; top:-4px; border-right:0; border-bottom:0; cursor:nwse-resize}
+.fxfr i[data-h="ne"]{right:-4px; top:-4px; border-left:0; border-bottom:0; cursor:nesw-resize}
+.fxfr i[data-h="sw"]{left:-4px; bottom:-4px; border-right:0; border-top:0; cursor:nesw-resize}
+.fxfr i[data-h="se"]{right:-4px; bottom:-4px; border-left:0; border-top:0; cursor:nwse-resize}
+.fxfr i::before{content:""; position:absolute; inset:-12px}
