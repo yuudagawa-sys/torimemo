@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "122";
+  var APPVER = "123";
 
   /* ============================================================
      小道具
@@ -5611,47 +5611,95 @@
       }).join("");
     }
 
-    sheet('<div class="panel-head"><h3>編集する</h3>'
-      + '<div style="display:flex;gap:8px">'
-      + '<button class="iconbtn" id="fxNo" aria-label="やめる"><svg><use href="#i-back"/></svg></button>'
-      + '<button class="iconbtn ok" id="fxOk" aria-label="これで保存"><svg><use href="#i-check"/></svg></button>'
-      + "</div></div>"
-      + '<div class="panel-body">'
-      + '<div class="cropbox" id="fxBox"><canvas id="fxCv"></canvas></div>'
-      + '<div class="fxrow">'
-      + '<button class="ghost" id="fxL">↺ 左に90°</button>'
-      + '<button class="ghost" id="fxR">↻ 右に90°</button>'
-      + "</div>"
-      + '<div class="field"><div class="label">切り抜き</div>'
-      + '<div class="segs" id="fxCuts">' + cutRow() + "</div></div>"
-      + '<div class="field"><div class="label">大きさ</div>'
-      + '<input class="zoom" id="fxZoom" type="range" min="100" max="320" value="100" step="1"></div>'
-      + '<div class="field"><div class="label">明るさ</div>'
-      + '<input class="zoom" id="fxBri" type="range" min="50" max="160" value="100" step="1"></div>'
-      + '<div class="field"><div class="label">くっきり</div>'
-      + '<input class="zoom" id="fxCon" type="range" min="60" max="180" value="100" step="1"></div>'
-      + '<div class="hintline">指でずらすと位置が変わります。2本指でつまむと大きさも。'
-      + "ここに見えているとおりに保存されます。</div>"
-      + "</div>"
-      + '<div class="panel-foot"><button class="ghost" id="fxReset">はじめに戻す</button>'
-      + '<span class="saveflag" id="fxSay"></span></div>', "dialog");
+    /* 画面いっぱいの黒い編集画面。写真を大きく出し、道具は下に固定する
+       （インスタの編集画面と同じ並び：写真／道具の中身／道具のアイコン／キャンセル・完了） */
+    var TOOLS = [
+      { k: "cut",  t: "切り抜き", ic: "i-crop" },
+      { k: "turn", t: "回転",     ic: "i-rotate" },
+      { k: "bri",  t: "明るさ",   ic: "i-sun" },
+      { k: "con",  t: "くっきり", ic: "i-contrast" }
+    ];
+    var tool = "cut";
+    var full = document.createElement("div");
+    full.className = "fxfull";
+    full.id = "fxFull";
+    full.setAttribute("role", "dialog");
+    full.setAttribute("aria-label", "編集する");
+    full.innerHTML = '<div class="fxtop"><button class="fxtxt" id="fxReset">はじめに戻す</button>'
+      + '<span class="fxsay" id="fxSay"></span></div>'
+      + '<div class="fxstage" id="fxStage"><div class="cropbox fxbox" id="fxBox"><canvas id="fxCv"></canvas></div></div>'
+      + '<div class="fxpanel" id="fxPanel"></div>'
+      + '<div class="fxtools" id="fxTools">' + TOOLS.map(function (x) {
+          return '<button data-tool="' + x.k + '"><span class="fxic"><svg><use href="#' + x.ic + '"/></svg></span>'
+            + "<span>" + esc(x.t) + "</span></button>";
+        }).join("") + "</div>"
+      + '<div class="fxbar"><button class="fxtxt" id="fxNo">キャンセル</button>'
+      + '<b id="fxName"></b><button class="fxtxt fxdone" id="fxOk">完了</button></div>';
+    document.body.appendChild(full);
+    document.documentElement.classList.add("fxopen");
 
     var box = $("fxBox"), cv = $("fxCv");
     function say(t, bad) {
       var e = $("fxSay");
-      if (e) { e.textContent = t || ""; e.style.color = bad ? "var(--rec)" : ""; }
+      if (e) { e.textContent = t || ""; e.style.color = bad ? "#ff8a80" : ""; }
     }
+    function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); cancel(); } }
+    function onSize() { paintFix(); }
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", onSize);
+    function fxClose() {
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", onSize);
+      document.documentElement.classList.remove("fxopen");
+      if (full.parentNode) full.parentNode.removeChild(full);
+    }
+    function cancel() { fxClose(); if (after) after(); }
+
+    function slider(id, min, max, val) {
+      return '<input class="zoom fxzoom" id="' + id + '" type="range" min="' + min + '" max="' + max
+        + '" value="' + val + '" step="1">';
+    }
+    /* 選んだ道具の中身を、アイコンの上に出す */
+    function showTool() {
+      var pn = $("fxPanel");
+      if (!pn) return;
+      var html = "";
+      if (tool === "cut") {
+        html = '<div class="segs fxsegs" id="fxCuts">' + cutRow() + "</div>"
+          + '<div class="fxline"><span>大きさ</span>' + slider("fxZoom", 100, 320, Math.round(st.s * 100)) + "</div>";
+      } else if (tool === "turn") {
+        html = '<div class="fxturn"><button class="fxtxt" id="fxL">↺ 左に90°</button>'
+          + '<button class="fxtxt" id="fxR">↻ 右に90°</button></div>';
+      } else if (tool === "bri") {
+        html = '<div class="fxline">' + slider("fxBri", 50, 160, bri) + "</div>";
+      } else {
+        html = '<div class="fxline">' + slider("fxCon", 60, 180, con) + "</div>";
+      }
+      pn.innerHTML = html;
+      Array.prototype.forEach.call(document.querySelectorAll("#fxTools [data-tool]"), function (b) {
+        b.setAttribute("aria-pressed", String(b.getAttribute("data-tool") === tool));
+      });
+      var nm = $("fxName");
+      TOOLS.forEach(function (x) { if (x.k === tool && nm) nm.textContent = x.t; });
+      if (tool === "cut") wireCuts();
+      var z = $("fxZoom"); if (z) z.oninput = function () { st.s = parseInt(this.value, 10) / 100; paintFix(); };
+      var bi = $("fxBri"); if (bi) bi.oninput = function () { bri = parseInt(this.value, 10); paintFix(); };
+      var ci = $("fxCon"); if (ci) ci.oninput = function () { con = parseInt(this.value, 10); paintFix(); };
+      var l = $("fxL"); if (l) l.onclick = function () { rot = (rot + 270) % 360; st.x = 0; st.y = 0; paintFix(); };
+      var r = $("fxR"); if (r) r.onclick = function () { rot = (rot + 90) % 360; st.x = 0; st.y = 0; paintFix(); };
+    }
+    Array.prototype.forEach.call(document.querySelectorAll("#fxTools [data-tool]"), function (b) {
+      b.onclick = function () { tool = b.getAttribute("data-tool"); showTool(); paintFix(); };
+    });
 
     function paintFix() {
+      if (!im || !$("fxStage")) return;
       var out = outSize();
-      /* 下書きが大きすぎると、回転や明るさの操作が画面の外に出てしまう。
-         縦に上限を設けて、写真と操作がいつも一緒に見えるようにする */
-      var room = Math.max(160, Math.min(Math.round(window.innerHeight * 0.34), 400));
-      box.style.aspectRatio = "auto";
-      box.style.marginInline = "auto";
-      var W = (box.parentNode ? box.parentNode.clientWidth : 0) || box.clientWidth || 320;
-      var H = Math.round(W * out.h / out.w);
-      if (H > room) { H = room; W = Math.round(H * out.w / out.h); }
+      /* 写真の置き場（道具を除いた残り全部）に、縦横比を保って入れる */
+      var stg = $("fxStage");
+      var roomW = Math.max(120, stg.clientWidth - 24), roomH = Math.max(120, stg.clientHeight - 24);
+      var W = roomW, H = Math.round(W * out.h / out.w);
+      if (H > roomH) { H = roomH; W = Math.round(H * out.w / out.h); }
       box.style.width = W + "px";
       box.style.height = H + "px";
       var dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -5662,9 +5710,9 @@
       clampST(W, H);
       render(g, W, H);
       cv.style.filter = "brightness(" + bri + "%) contrast(" + con + "%)";
-      say(out.w + "×" + out.h);
     }
 
+    showTool();
     DB.get("blobs", it.origId || it.blobId).then(function (r) {
       if (!r || !r.blob) throw new Error("元の写真が見つかりませんでした。");
       return decode(r.blob);
@@ -5674,28 +5722,23 @@
       paintFix();
     }).catch(function (e) { say(why(e), true); });
 
-    $("fxNo").onclick = function () { closeSheet(); if (after) after(); };
-    $("fxL").onclick = function () { rot = (rot + 270) % 360; st.x = 0; st.y = 0; paintFix(); };
-    $("fxR").onclick = function () { rot = (rot + 90) % 360; st.x = 0; st.y = 0; paintFix(); };
+    $("fxNo").onclick = cancel;
     $("fxReset").onclick = function () {
       rot = 0; bri = 100; con = 100; cut = "as"; st = { s: 1, x: 0, y: 0 };
-      $("fxZoom").value = 100; $("fxBri").value = 100; $("fxCon").value = 100;
-      $("fxCuts").innerHTML = cutRow(); wireCuts();
+      showTool();
       paintFix();
     };
     function wireCuts() {
-      Array.prototype.forEach.call($("fxCuts").querySelectorAll("[data-cut]"), function (b) {
+      var row = $("fxCuts");
+      if (!row) return;
+      Array.prototype.forEach.call(row.querySelectorAll("[data-cut]"), function (b) {
         b.onclick = function () {
           cut = b.getAttribute("data-cut");
-          $("fxCuts").innerHTML = cutRow(); wireCuts();
+          row.innerHTML = cutRow(); wireCuts();
           paintFix();
         };
       });
     }
-    wireCuts();
-    $("fxZoom").oninput = function () { st.s = parseInt(this.value, 10) / 100; paintFix(); };
-    $("fxBri").oninput = function () { bri = parseInt(this.value, 10); paintFix(); };
-    $("fxCon").oninput = function () { con = parseInt(this.value, 10); paintFix(); };
 
     /* 指で動かす。切り抜きの枠に対する割合で覚える */
     var pts = {}, base = null;
@@ -5718,7 +5761,7 @@
         var d = Math.hypot(a.x - b.x, a.y - b.y);
         if (base == null) { base = { d: d, s: st.s }; return; }
         st.s = Math.max(1, Math.min(3.2, base.s * (d / base.d)));
-        $("fxZoom").value = Math.round(st.s * 100);
+        if ($("fxZoom")) $("fxZoom").value = Math.round(st.s * 100);
         paintFix();
       }
     });
@@ -5745,7 +5788,7 @@
       var th = out.w >= out.h ? Math.round(400 * out.h / out.w) : 400;
       Promise.all([bake(out.w, out.h, photoSize().q), bake(tw, th, 0.72)])
         .then(function (r) { return saveFixed(it, r[0], r[1]); })
-        .then(function () { closeSheet(); toast("直しました"); if (after) after(); })
+        .then(function () { fxClose(); toast("直しました"); if (after) after(); })
         .catch(function (e) { say(why(e), true); });
     };
   }
