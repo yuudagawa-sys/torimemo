@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "125";
+  var APPVER = "126";
 
   /* ============================================================
      小道具
@@ -5556,6 +5556,9 @@
     var fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
     /* 余白。写真の長いほうの辺に対する%。色は白か黒 */
     var pad = 0, padCol = "#ffffff";
+    /* モザイク。なぞった線を、写真の部分（余白を除く）に対する割合で持つ。
+       {r: 太さ（横幅に対する割合）, pts: [[x, y], ...]} の並び */
+    var marks = [], brush = 5;
     var im = null, nat = { w: 0, h: 0 };
 
     /* 回したあとの、元画像の向き */
@@ -5620,6 +5623,30 @@
     }
     function renderInner(g, W, H) { if (isFree()) renderFree(g, W, H); else render(g, W, H); }
 
+    /* なぞったところだけ、粗い升目にする。升目の大きさは横幅の1/36（下書きも仕上がりも同じ見え方） */
+    function mosaic(g, W, H) {
+      if (!marks.length) return;
+      var cell = Math.max(4, Math.round(W / 36));
+      var sw = Math.max(1, Math.round(W / cell)), sh = Math.max(1, Math.round(H / cell));
+      var sm = document.createElement("canvas");
+      sm.width = sw; sm.height = sh;
+      var gs = sm.getContext("2d");
+      gs.drawImage(g.canvas, 0, 0, W, H, 0, 0, sw, sh);
+      g.save();
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.beginPath();
+      marks.forEach(function (m) {
+        var rr = m.r * W;
+        m.pts.forEach(function (q) { g.moveTo(q[0] * W + rr, q[1] * H); g.arc(q[0] * W, q[1] * H, rr, 0, Math.PI * 2); });
+      });
+      g.clip();
+      g.imageSmoothingEnabled = false;
+      g.drawImage(sm, 0, 0, sw, sh, 0, 0, W, H);
+      g.restore();
+    }
+    /* 切り抜き・回転・位置が変わると、モザイクの場所がずれる。そのときは消す */
+    function geomChanged() { if (marks.length) { marks = []; say("モザイクを消しました"); } }
+
     /* 明るさとコントラスト。下書きはCSSに任せ、仕上がりだけ自前で計算する。
        canvas の filter は古いiPhoneで効かないことがあるため */
     function tone(g, W, H) {
@@ -5648,7 +5675,8 @@
       { k: "turn", t: "回転",     ic: "i-rotate" },
       { k: "bri",  t: "明るさ",   ic: "i-sun" },
       { k: "con",  t: "くっきり", ic: "i-contrast" },
-      { k: "pad",  t: "余白",     ic: "i-frame" }
+      { k: "pad",  t: "余白",     ic: "i-frame" },
+      { k: "mos",  t: "モザイク", ic: "i-mosaic" }
     ];
     var tool = "cut", picking = false;
     var full = document.createElement("div");
@@ -5707,6 +5735,10 @@
         html = '<div class="fxline">' + slider("fxBri", 50, 160, bri) + "</div>";
       } else if (tool === "con") {
         html = '<div class="fxline">' + slider("fxCon", 60, 180, con) + "</div>";
+      } else if (tool === "mos") {
+        html = '<div class="fxturn"><button class="fxtxt" id="fxMosBack">1つ戻す</button>'
+          + '<button class="fxtxt" id="fxMosClear">全部消す</button></div>'
+          + '<div class="fxline"><span>太さ</span>' + slider("fxBrush", 2, 12, brush) + "</div>";
       } else {
         /* 余白の色：白・黒のほか、写真の中から拾う（スポイト）か、好きな色を選ぶ */
         var preset = padCol === "#ffffff" || padCol === "#000000";
@@ -5728,6 +5760,7 @@
       Array.prototype.forEach.call(pn.querySelectorAll("[data-cut]"), function (b) {
         b.onclick = function () {
           cut = b.getAttribute("data-cut");
+          geomChanged();
           if (isFree()) fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
           showTool(); paintFix();
         };
@@ -5739,14 +5772,18 @@
       var cl = $("fxColor"); if (cl) cl.oninput = function () { padCol = this.value; picking = false; if (!pad) pad = 6; paintFix();
         var ch = full.querySelector(".fxchip"); if (ch) ch.style.background = padCol; };
       if (cl) cl.onchange = function () { showTool(); };
-      var z = $("fxZoom"); if (z) z.oninput = function () { st.s = parseInt(this.value, 10) / 100; paintFix(); };
+      var z = $("fxZoom"); if (z) z.oninput = function () { geomChanged(); st.s = parseInt(this.value, 10) / 100; paintFix(); };
       var bi = $("fxBri"); if (bi) bi.oninput = function () { bri = parseInt(this.value, 10); paintFix(); };
       var ci = $("fxCon"); if (ci) ci.oninput = function () { con = parseInt(this.value, 10); paintFix(); };
       var pd = $("fxPad"); if (pd) pd.oninput = function () { pad = parseInt(this.value, 10); paintFix(); };
+      var bs = $("fxBrush"); if (bs) bs.oninput = function () { brush = parseInt(this.value, 10); };
+      var mb = $("fxMosBack"); if (mb) mb.onclick = function () { marks.pop(); paintFix(); };
+      var mc = $("fxMosClear"); if (mc) mc.onclick = function () { marks = []; paintFix(); };
       var l = $("fxL"); if (l) l.onclick = function () { turn(270); };
       var r = $("fxR"); if (r) r.onclick = function () { turn(90); };
     }
     function turn(d) {
+      geomChanged();
       rot = (rot + d) % 360; st.x = 0; st.y = 0;
       fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 };
       paintFix();
@@ -5774,8 +5811,9 @@
       box.style.background = M ? padCol : "#fff";
       box.style.width = (W + 2 * M) + "px";
       box.style.height = (H + 2 * M) + "px";
-      box.classList.toggle("nogrid", !!M || editing);
+      box.classList.toggle("nogrid", !!M || editing || tool === "mos");
       box.classList.toggle("picking", picking);
+      box.classList.toggle("painting", tool === "mos");
       var dpr = Math.min(2, window.devicePixelRatio || 1);
       cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
       cv.style.width = W + "px"; cv.style.height = H + "px";
@@ -5784,6 +5822,7 @@
       if (editing) render(g, W, H, { s: 1, x: 0, y: 0 });
       else if (isFree()) renderFree(g, W, H);
       else { clampST(W, H); render(g, W, H); }
+      if (!editing) mosaic(g, cv.width, cv.height);
       cv.style.filter = "brightness(" + bri + "%) contrast(" + con + "%)";
       frEl.hidden = !editing;
       if (editing) {
@@ -5807,7 +5846,7 @@
     $("fxNo").onclick = cancel;
     $("fxReset").onclick = function () {
       rot = 0; bri = 100; con = 100; cut = "as"; st = { s: 1, x: 0, y: 0 };
-      fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; pad = 0; padCol = "#ffffff"; picking = false;
+      fr = { x: 0.05, y: 0.05, w: 0.9, h: 0.9 }; pad = 0; padCol = "#ffffff"; picking = false; marks = [];
       showTool();
       paintFix();
     };
@@ -5835,6 +5874,14 @@
       box.setPointerCapture(e.pointerId);
       pts[e.pointerId] = { x: e.clientX, y: e.clientY }; base = null;
       drag = null;
+      if (tool === "mos" && !framing()) {
+        var r0 = cv.getBoundingClientRect();
+        drag = { mos: { r: brush / 100, pts: [] } };
+        marks.push(drag.mos);
+        drag.mos.pts.push([(e.clientX - r0.left) / r0.width, (e.clientY - r0.top) / r0.height]);
+        paintFix();
+        return;
+      }
       if (framing()) {
         var h = e.target.getAttribute && e.target.getAttribute("data-h");
         if (h || e.target === frEl) drag = { h: h || "move", x: e.clientX, y: e.clientY, f: { x: fr.x, y: fr.y, w: fr.w, h: fr.h } };
@@ -5843,6 +5890,18 @@
     box.addEventListener("pointermove", function (e) {
       if (!pts[e.pointerId]) return;
       var W = cv.clientWidth || 1, H = cv.clientHeight || 1;
+      if (drag && drag.mos) {
+        var r1 = cv.getBoundingClientRect();
+        var u = (e.clientX - r1.left) / r1.width, v = (e.clientY - r1.top) / r1.height;
+        var last = drag.mos.pts[drag.mos.pts.length - 1];
+        /* 太さの半分ずつ点を置く。速くなぞっても途切れないように */
+        var step = drag.mos.r * 0.5, dist = Math.hypot((u - last[0]), (v - last[1]) * r1.height / r1.width);
+        var n = Math.max(1, Math.ceil(dist / step));
+        for (var j = 1; j <= n; j++) drag.mos.pts.push([last[0] + (u - last[0]) * j / n, last[1] + (v - last[1]) * j / n]);
+        paintFix();
+        return;
+      }
+      if (tool === "mos") return;
       if (framing()) {
         if (!drag) return;
         var dx = (e.clientX - drag.x) / W, dy = (e.clientY - drag.y) / H, o = drag.f;
@@ -5862,6 +5921,7 @@
       }
       if (isFree()) return;
       var ids = Object.keys(pts);
+      geomChanged();
       if (ids.length === 1) {
         st.x += (e.clientX - pts[e.pointerId].x) / W;
         st.y += (e.clientY - pts[e.pointerId].y) / H;
@@ -5891,6 +5951,7 @@
       ci.width = iw; ci.height = ih;
       var gi = ci.getContext("2d");
       renderInner(gi, iw, ih);
+      mosaic(gi, iw, ih);
       tone(gi, iw, ih);
       var c = ci;
       if (M) {

@@ -2364,3 +2364,7 @@ html.fxopen, html.fxopen body{overflow:hidden}
 .fxsegs .fxany input{position:absolute; inset:0; opacity:0; width:100%; height:100%; cursor:pointer}
 .fxchip{width:14px; height:14px; border-radius:50%; border:1px solid rgba(255,255,255,.5); display:inline-block}
 .fxbox.picking{cursor:crosshair}
+/* 道具が6つになったので、狭い画面でも1列に収める */
+.fxtools button{flex:1 1 0; min-width:0}
+.fxic{width:42px; height:42px}
+.fxbox.painting{cursor:crosshair}
