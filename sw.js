@@ -4,7 +4,7 @@
  * 電波がなくても起動できるようにする。
  * 写真やメモは IndexedDB 側にあるので、ここでは扱わない。
  */
-var CACHE = "expo-note-v126";
+var CACHE = "expo-note-v127";
 var SHELL = [
   "./",
   "./index.html",
@@ -47,8 +47,12 @@ self.addEventListener("fetch", function (e) {
   var url = new URL(req.url);
   var sameOrigin = url.origin === self.location.origin;
 
-  /* 書体は取れたぶんだけ貯めておく（取れなければ端末の書体で表示される） */
+  /* よその場所への通信は、書体（Google Fonts）だけ貯めておく（取れなければ端末の書体で表示される）。
+     前は、よその通信をぜんぶ貯めて先に出していた。そのため Google ドライブへの問い合わせ
+     （中身の一覧・写真・アカウント）まで古い答えが返ることがあり、写真が二重に残って
+     容量も食っていた。書体以外は、ここでは何もせず、そのまま通す */
   if (!sameOrigin) {
+    if (url.hostname !== "fonts.googleapis.com" && url.hostname !== "fonts.gstatic.com") return;
     e.respondWith(
       caches.match(req).then(function (hit) {
         if (hit) return hit;

@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "126";
+  var APPVER = "127";
 
   /* ============================================================
      小道具
@@ -30,8 +30,18 @@
     var d = new Date();
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   };
+  /* 番号。先頭は時刻（並べたとき作った順になる）、うしろは乱数。
+     Math.random の6桁では、同じミリ秒にたくさん作ると重なる恐れがあったので、
+     使えるときは暗号用の乱数で10桁にする */
   var uid = function () {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    var tail = "";
+    try {
+      var a = new Uint8Array(8);
+      crypto.getRandomValues(a);
+      tail = Array.prototype.map.call(a, function (x) { return (x % 36).toString(36); }).join("").slice(0, 10);
+    } catch (e) {}
+    if (tail.length < 10) tail = (tail + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 10);
+    return Date.now().toString(36) + tail;
   };
   var mb = function (b) {
     if (b == null) return "";
@@ -145,10 +155,17 @@
              ほかと同じ形（id と時刻を持つ記録）で置く */
           if (!d.objectStoreNames.contains("prefs")) d.createObjectStore("prefs", { keyPath: "id" });
         };
-        r.onsuccess = function () { res(r.result); };
+        r.onsuccess = function () {
+          var d = r.result;
+          /* ほかのタブで新しい版が開いたら、こちらは閉じて、次に使うとき開き直す */
+          d.onversionchange = function () { try { d.close(); } catch (e) {} dbp = null; };
+          res(d);
+        };
         r.onerror = function () { rej(r.error); };
         r.onblocked = function () { rej(new Error("ほかのタブでこのアプリが開いています。閉じてからお試しください。")); };
       });
+      /* 開けなかったときは、その失敗を覚えたままにしない。次に使うとき、もう一度開きにいく */
+      dbp.catch(function () { dbp = null; });
       return dbp;
     }
 
@@ -267,7 +284,9 @@
         });
       },
       wipe: function () {
-        return run(["exhibitions", "brands", "items", "blobs", "gone", "boards"], "readwrite", function (t) {
+        return run(["exhibitions", "brands", "items", "blobs", "gone", "boards", "templates", "prefs"], "readwrite", function (t) {
+          t.objectStore("templates").clear();
+          t.objectStore("prefs").clear();
           t.objectStore("boards").clear();
           t.objectStore("exhibitions").clear();
           t.objectStore("brands").clear();
@@ -379,6 +398,10 @@
         var lnlen = v.getUint16(lho + 26, true), lelen = v.getUint16(lho + 28, true);
         var start = lho + 30 + lnlen + lelen;
         out.push({ name: name, u8: u8.subarray(start, start + size) });
+      } else if (!/\/$/.test(name)) {
+        /* フォルポが書き出すZIPは圧縮しない。圧縮されたものは、ほかのアプリで作り直したZIP。
+           黙って飛ばすと「読み込めたのに中身が足りない」になるので、はっきり断る */
+        throw new Error("このZIPは圧縮されているため読み込めません。フォルポで書き出したZIPをそのまま使ってください。");
       }
       pos += 46 + nlen + elen + clen;
     }
@@ -1243,6 +1266,21 @@
   /* ============================================================
      起動
      ============================================================ */
+  /* 思わぬところで止まったとき、黙って固まらないよう一言だけ知らせる。
+     同じ知らせを続けて出さないよう、5秒あける。
+     約束ごと（Promise）の取りこぼしは、通信の失敗などが多くて知らせるとうるさいので、記録だけ残す */
+  var lastOops = 0;
+  window.addEventListener("error", function (ev) {
+    if (!ev || !ev.error) return;   /* 画像の読み込み失敗などは、ここでは扱わない */
+    try { console.error(ev.error); } catch (x) {}
+    if (Date.now() - lastOops < 5000) return;
+    lastOops = Date.now();
+    try { toast("うまくいかないところがありました。もう一度お試しください。", true); } catch (x) {}
+  });
+  window.addEventListener("unhandledrejection", function (ev) {
+    try { console.warn("取りこぼし:", ev && ev.reason); } catch (x) {}
+  });
+
   boot();
 
   /* 古い版では、写真1件ごとに「カテゴリ」が付いていた。
@@ -7816,7 +7854,7 @@
   function makeBackup(exFilter, itFilter) {
     progress(3);
     toast("まとめています…");
-    var meta = { version: 4, madeAt: new Date().toISOString(), exhibitions: [], items: [], templates: [], boards: [], gone: [] };
+    var meta = { version: BACKUP_VER, madeAt: new Date().toISOString(), exhibitions: [], items: [], templates: [], boards: [], gone: [] };
     var entries = [], blobIds = [];
 
     /* 一部だけ書き出すときは、消えた記録まで持ち出さない。
@@ -7862,6 +7900,9 @@
     }).catch(function (e) { progress(100); toast(why(e), true); });
   }
 
+  /* バックアップ（data.json）の形式の版。中身の形を変えたら上げる */
+  var BACKUP_VER = 4;
+
   function restore(file) {
     progress(5);
     toast("読み込んでいます…");
@@ -7872,40 +7913,97 @@
         else if (f.name.indexOf("blobs/") === 0) blobs[f.name.slice(6)] = f.u8;
       });
       if (!meta) throw new Error("このZIPにはバックアップのデータが入っていません。");
-
-      var pairs = [];
-      (meta.exhibitions || []).forEach(function (x) { pairs.push(["exhibitions", x]); });
-      (meta.brands || []).forEach(function (x) { pairs.push(["brands", x]); });
-      (meta.items || []).forEach(function (x) { pairs.push(["items", x]); });
-      (meta.templates || []).forEach(function (x) { pairs.push(["templates", x]); });
-      (meta.boards || []).forEach(function (x) { pairs.push(["boards", x]); });
-      Object.keys(blobs).forEach(function (id) {
-        var it = (meta.items || []).filter(function (x) { return x.blobId === id || x.thumbId === id; })[0];
-        /* 小さい絵（写真の縮小・動画の表紙）は JPEG。本体はそのものの種類。
-           動画の表紙を動画の種類で入れると、戻したあと表紙が出なくなる */
-        var small = it && it.thumbId === id && it.thumbId !== it.blobId;
-        var type = it ? (small ? "image/jpeg" : (it.mime || "application/octet-stream")) : "application/octet-stream";
-        pairs.push(["blobs", { id: id, blob: new Blob([blobs[id]], { type: type }) }]);
+      if (Number(meta.version || 1) > BACKUP_VER) {
+        throw new Error("新しい版のフォルポで作ったバックアップです。アプリを新しくしてから読み込んでください。");
+      }
+      return Promise.all([myRecords(), DB.all("brands")]).then(function (r) {
+        return mergeBackup(meta, blobs, r[0], r[1]);
       });
-
-      progress(60);
-      /* 書いてある時刻のまま入れる。ここで今の時刻に塗り替えると、
-         どちらが新しいか分からなくなる */
-      return DB.putManyRaw(pairs).then(function () {
-        curEx = null; screen = "shelf"; curCat = "all";
-        return Promise.all([DB.all("exhibitions"), DB.all("templates"), DB.all("boards")]);
-      }).then(function (r) {
-        exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
-        takeTemplates(r[1]);
-        boards = r[2] || [];
-        remember("ex", "");
-        closeSheet();
-        return goShelf();
-      }).then(function () {
+    }).then(function (res) {
+      if (!res) return null;
+      var n = res.n;
+      return applyBackup(res).then(function () {
         progress(100);
-        toast("読み込みました（フォルダ " + (meta.exhibitions || []).length + " 件）");
+        toast("読み込みました（足した " + n.add + " 件・新しくした " + n.upd + " 件・"
+          + "こちらのほうが新しくて残した " + n.keep + " 件）");
       });
     }).catch(function (e) { progress(100); toast(why(e), true); });
+  }
+
+  /* 戻すときの決まり（同期と同じ考え方）
+     ・同じものが両方にあるなら、新しいほうを残す。古いバックアップで、きのうの直しを巻き戻さない
+     ・「消した」という記録のほうが新しければ、消えたままにする。消したものを生き返らせない
+     ・バックアップに入っている「消した」記録も取り込み、こちらの古いものは消す */
+  function mergeBackup(meta, blobs, here, brandsHere) {
+    var STORES = ["exhibitions", "items", "templates", "boards"];
+    var mine = {};
+    STORES.forEach(function (st) {
+      mine[st] = {};
+      (here[st] || []).forEach(function (x) { mine[st][x.id] = x; });
+    });
+    var tomb = {};
+    function noteTomb(g) {
+      if (!g || !g.store || !g.rid) return;
+      var k = g.store + "/" + g.rid;
+      if (!tomb[k] || Number(g.upAt) > Number(tomb[k].upAt)) tomb[k] = g;
+    }
+    (here.gone || []).forEach(noteTomb);
+    (meta.gone || []).forEach(noteTomb);
+
+    var pairs = [], kills = [], used = {}, n = { add: 0, upd: 0, keep: 0 };
+    STORES.forEach(function (st) {
+      (meta[st] || []).forEach(function (x) {
+        if (!x || !x.id) return;
+        var t = tomb[st + "/" + x.id];
+        if (t && Number(t.upAt) >= Number(x.upAt || 0)) return;
+        var cur = mine[st][x.id];
+        if (!cur) { pairs.push([st, x]); n.add++; }
+        else if (Number(x.upAt || 0) > Number(cur.upAt || 0)) { pairs.push([st, x]); n.upd++; }
+        else { n.keep++; return; }
+        if (st === "items") [x.blobId, x.thumbId, x.origId].forEach(function (id) { if (id) used[id] = x; });
+      });
+    });
+    (meta.gone || []).forEach(function (g) {
+      if (!g || !g.store || !g.rid) return;
+      var cur = mine[g.store] && mine[g.store][g.rid];
+      if (cur && Number(g.upAt) > Number(cur.upAt || 0)) kills.push([g.store, g.rid]);
+      pairs.push(["gone", g]);
+    });
+    /* 昔の版の分類（brands）は、こちらに無いものだけ足す */
+    var hadBrand = {};
+    (brandsHere || []).forEach(function (b) { hadBrand[b.id] = 1; });
+    (meta.brands || []).forEach(function (x) { if (x && x.id && !hadBrand[x.id]) pairs.push(["brands", x]); });
+
+    /* 写真・録音の実物は、採った記録が指しているものだけ入れる */
+    Object.keys(blobs).forEach(function (id) {
+      var it = used[id];
+      if (!it) return;
+      /* 小さい絵（写真の縮小・動画の表紙）は JPEG。本体はそのものの種類。
+           動画の表紙を動画の種類で入れると、戻したあと表紙が出なくなる */
+      var small = it.thumbId === id && it.thumbId !== it.blobId;
+      var type = small ? "image/jpeg" : (it.mime || "application/octet-stream");
+      pairs.push(["blobs", { id: id, blob: new Blob([blobs[id]], { type: type }) }]);
+    });
+    return { meta: meta, pairs: pairs, kills: kills, n: n };
+  }
+
+  function applyBackup(res) {
+    progress(60);
+    /* 書いてある時刻のまま入れる。ここで今の時刻に塗り替えると、
+       どちらが新しいか分からなくなる */
+    return DB.putManyRaw(res.pairs).then(function () {
+      return res.kills.length ? DB.dropRaw(res.kills, []) : null;
+    }).then(function () {
+      curEx = null; screen = "shelf"; curCat = "all";
+      return Promise.all([DB.all("exhibitions"), DB.all("templates"), DB.all("boards")]);
+    }).then(function (r) {
+      exs = r[0].sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
+      takeTemplates(r[1]);
+      boards = r[2] || [];
+      remember("ex", "");
+      closeSheet();
+      return goShelf();
+    });
   }
   /* ============================================================
      1枚を画面いっぱいで見る
