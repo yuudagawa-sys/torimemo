@@ -2368,3 +2368,107 @@ html.fxopen, html.fxopen body{overflow:hidden}
 .fxtools button{flex:1 1 0; min-width:0}
 .fxic{width:42px; height:42px}
 .fxbox.painting{cursor:crosshair}
+
+/* ================= v128 現場で撮る ================= */
+/* ホームとフォルダの右下の「撮る」。親指で届く場所に、大きく */
+.quickcam{
+  position:fixed; right:16px; z-index:55;
+  border:0; border-radius:999px; padding:13px 20px 13px 16px;
+  background:var(--mark); color:#fff;
+  display:inline-flex; align-items:center; gap:8px;
+  font-size:15px; font-weight:700; letter-spacing:.04em;
+  box-shadow:0 3px 14px rgba(20,21,26,.24);
+  transition:transform .1s ease-out;
+}
+.quickcam[hidden]{display:none}
+.quickcam svg{width:22px; height:22px; display:block; stroke-width:2}
+.quickcam:active{transform:scale(.94)}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .quickcam{box-shadow:0 3px 16px rgba(0,0,0,.55)}
+}
+:root[data-theme="dark"] .quickcam{box-shadow:0 3px 16px rgba(0,0,0,.55)}
+
+/* カメラの上の帯：入れるフォルダ（押すと替えられる） */
+.cam-top .where{
+  display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:62vw;
+  font-size:13px; padding:6px 10px; border-radius:999px; background:rgba(0,0,0,.35);
+}
+.cam-top .where span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.cam-top .where svg{width:14px; height:14px; flex:0 0 auto; transform:rotate(90deg)}
+/* ブランドの札。横に送れる */
+.cambrands{
+  position:absolute; left:0; right:0; z-index:2;
+  top:calc(54px + env(safe-area-inset-top));
+  display:flex; gap:6px; align-items:center; overflow-x:auto; scrollbar-width:none;
+  padding:4px 14px;
+}
+.cambrands::-webkit-scrollbar{display:none}
+.cambrands .cbl{color:#fff; opacity:.75; font-size:11px; flex:0 0 auto; margin-right:2px}
+.cambrands button{
+  flex:0 0 auto; color:#fff; background:rgba(0,0,0,.4); border:1px solid rgba(255,255,255,.35);
+  border-radius:999px; padding:5px 12px; font-size:13px; white-space:nowrap;
+}
+.cambrands button[aria-pressed="true"]{background:#fff; color:#000; border-color:#fff; font-weight:600}
+.cambrands .cbadd{padding:5px 11px}
+.tray{border:0; padding:0}
+.tray.saving::after{
+  content:""; position:absolute; left:4px; bottom:4px; width:8px; height:8px; border-radius:50%;
+  background:var(--mark); animation:camwait .9s ease-in-out infinite alternate;
+}
+@keyframes camwait{from{opacity:.25}to{opacity:1}}
+/* カメラの上に重ねる小窓。下に寄せて、写真の大半は見えたまま */
+.camlayer{
+  position:absolute; inset:0; z-index:5; display:none;
+  background:rgba(0,0,0,.35); align-items:flex-end; justify-content:center;
+}
+.camlayer.on{display:flex}
+.campanel{
+  width:100%; max-width:560px; max-height:78vh; overflow-y:auto;
+  background:var(--paper); color:var(--ink);
+  border-radius:var(--rc) var(--rc) 0 0;
+  padding:12px 16px calc(16px + env(safe-area-inset-bottom));
+  display:grid; gap:10px;
+}
+.camhead{display:flex; align-items:center; gap:10px}
+.camhead b{flex:1; font-size:15px}
+.camhead img{width:40px; height:40px; object-fit:cover; border-radius:var(--r)}
+.camhead button{width:36px; height:36px; display:grid; place-items:center; border-radius:999px; color:var(--ink)}
+.camhead button.ok{background:var(--ink); color:var(--paper)}
+.camhead svg{width:18px; height:18px; display:block}
+.cambody{display:grid; gap:10px}
+
+/* フォルダを選ぶ一覧（カメラの中と、選んで移すとき） */
+.exrows{display:grid; gap:6px; max-height:44vh; overflow-y:auto}
+.exrow{
+  display:flex; align-items:baseline; justify-content:space-between; gap:10px; text-align:left;
+  padding:10px 12px; border:1px solid var(--line2); border-radius:var(--r); background:var(--card); color:var(--ink);
+}
+.exrow b{font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.exrow span{font-size:11px; color:var(--ink3); flex:0 0 auto}
+.exrow[aria-pressed="true"]{border-color:var(--mark); box-shadow:inset 0 0 0 1px var(--mark)}
+.exnew{display:grid; grid-template-columns:1fr auto; gap:8px; margin-top:8px}
+
+/* 写真に付ける項目（評価・価格・カラー…） */
+.fields{display:grid; gap:8px}
+.fmarks{display:flex; gap:8px}
+.fmark{
+  flex:1; padding:9px 10px; border-radius:999px; font-size:14px; font-weight:600;
+  border:1px solid var(--line2); background:var(--card); color:var(--ink2);
+}
+.fmark.like[aria-pressed="true"]{background:var(--ink); border-color:var(--ink); color:var(--paper)}
+.fmark.call[aria-pressed="true"]{background:var(--mark); border-color:var(--mark); color:#fff}
+.fgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.fcell{display:grid; gap:3px}
+.fcell span{font-size:11px; color:var(--ink3); letter-spacing:.04em}
+.fcell .inp{padding:7px 10px}
+.labelrow{display:flex; align-items:center; justify-content:space-between; gap:8px}
+.voicebtn{
+  display:inline-flex; align-items:center; gap:5px; font-size:12.5px; color:var(--ink2);
+  padding:4px 10px; border:1px solid var(--line2); border-radius:999px; background:var(--card);
+}
+.voicebtn svg{width:15px; height:15px; display:block}
+
+/* 上の帯の「同期済み」など */
+.syncbit.ok{color:var(--ink3)}
+.syncbit.wait, .syncbit.run{color:var(--ink2)}
+.syncbit.off{color:var(--mark)}

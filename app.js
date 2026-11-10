@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "127";
+  var APPVER = "128";
 
   /* ============================================================
      小道具
@@ -234,6 +234,7 @@
       putMany: function (pairs) {
         var names = [];
         pairs.forEach(function (p) { if (names.indexOf(p[0]) < 0) names.push(p[0]); });
+        if (!names.length) return Promise.resolve();
         return run(names, "readwrite", function (t) {
           pairs.forEach(function (p) { t.objectStore(p[0]).put(stamp(p[0], p[1])); });
         }).then(function (r) {
@@ -1068,6 +1069,109 @@
     return memoForm(ex);
   }
 
+  /* ============================================================
+     写真に付ける項目の「型」（v128）
+     ------------------------------------------------------------
+     展示会で撮った1枚に、価格・カラー…を書き込めるようにする。
+     項目の並びはここだけに書く。別の仕事（たとえば不動産の内見）に
+     使うときは、型をもう1つ足して、フォルダの type で選ぶ。
+     値は item.fields に { 項目のk: 文字 } で入れ、空の項目は持たない。
+     type の無いフォルダは展示会の型として扱う（前からのデータは書き換えない）。
+     ブランドは、前から「タグ」で持っているので、ここには入れない
+     ============================================================ */
+  var TYPES = {
+    expo: { name: "展示会", fields: [
+      { k: "mark", t: "評価", kind: "pick", opts: [{ k: "like", t: "気になる" }, { k: "call", t: "要連絡" }] },
+      { k: "price", t: "価格", mode: "decimal" },
+      { k: "color", t: "カラー" },
+      { k: "size", t: "サイズ" },
+      { k: "due", t: "納期" },
+      { k: "moq", t: "最小ロット", mode: "numeric" },
+      { k: "contact", t: "担当者" }
+    ] }
+  };
+  function typeOf(ex) { return TYPES[(ex && ex.type) || "expo"] || TYPES.expo; }
+  function fieldsOf(it) { return (it && it.fields) || {}; }
+  /* 探すときに拾う文字。評価は「要連絡」のような言葉で拾えるようにする */
+  function fieldText(it) {
+    var f = fieldsOf(it), out = [];
+    typeOf(exById(it && it.exId)).fields.forEach(function (d) {
+      var v = f[d.k];
+      if (!v) return;
+      if (d.opts) d.opts.forEach(function (o) { if (o.k === v) out.push(o.t); });
+      else out.push(v);
+    });
+    return out.join(" ");
+  }
+  function fieldsHtml(it) {
+    var f = fieldsOf(it), ty = typeOf(exById(it.exId));
+    var picks = "", cells = "";
+    ty.fields.forEach(function (d) {
+      if (d.kind === "pick") {
+        picks += '<div class="fmarks" role="group" aria-label="' + esc(d.t) + '">'
+          + d.opts.map(function (o) {
+              return '<button type="button" class="fmark ' + o.k + '" data-fk="' + d.k + '" data-fv="' + o.k + '"'
+                + ' aria-pressed="' + (f[d.k] === o.k) + '">' + esc(o.t) + "</button>";
+            }).join("") + "</div>";
+        return;
+      }
+      cells += '<label class="fcell"><span>' + esc(d.t) + "</span>"
+        + '<input class="inp" data-fk="' + d.k + '"' + (d.mode ? ' inputmode="' + d.mode + '"' : "")
+        + ' value="' + esc(f[d.k] || "") + '" autocomplete="off"></label>';
+    });
+    return '<div class="fields">' + picks + '<div class="fgrid">' + cells + "</div></div>";
+  }
+  /* 書いたら少し待って保存する。押す印はすぐ保存する。
+     put は保存のしかた（写真の画面と、カメラの中のシートで違う） */
+  function wireFields(root, it, put) {
+    var timer = null;
+    /* 打った字はその場でここに控える。保存は少しあとでも、
+       その前に画面を閉じられても、控えから保存できる */
+    var cur = {};
+    Object.keys(fieldsOf(it)).forEach(function (k) { cur[k] = it.fields[k]; });
+    function copy() { var f = {}; Object.keys(cur).forEach(function (k) { f[k] = cur[k]; }); return f; }
+    function now() { clearTimeout(timer); timer = null; put({ fields: copy() }); }
+    Array.prototype.forEach.call(root.querySelectorAll("input[data-fk]"), function (el) {
+      el.oninput = function () {
+        var k = el.getAttribute("data-fk"), v = el.value.trim();
+        if (v) cur[k] = v; else delete cur[k];
+        clearTimeout(timer); timer = setTimeout(now, 600);
+      };
+      el.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); el.blur(); } };
+      el.onblur = function () { if (timer) now(); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll("button[data-fk]"), function (b) {
+      b.onclick = function () {
+        var k = b.getAttribute("data-fk"), v = b.getAttribute("data-fv");
+        if (cur[k] === v) delete cur[k]; else cur[k] = v;
+        Array.prototype.forEach.call(root.querySelectorAll('button[data-fk="' + k + '"]'), function (x) {
+          x.setAttribute("aria-pressed", String(cur[k] === x.getAttribute("data-fv")));
+        });
+        now();
+      };
+    });
+    /* 閉じる前に呼ぶ。書きかけを取りこぼさない */
+    return { flush: function () { if (timer) now(); } };
+  }
+
+  /* 声で入れる。文字起こしは端末のキーボードのマイクに任せる。
+     アプリが自分で録って送る仕組みにすると、声がよその会社へ渡るため。
+     ここではメモ欄の最後にカーソルを置いて、キーボードを出すだけ */
+  function voiceBtn(id) {
+    return '<button type="button" class="voicebtn" id="' + id + '"><svg><use href="#i-mic"/></svg><span>声で入力</span></button>';
+  }
+  function wireVoice(id, taId) {
+    var b = $(id);
+    if (!b) return;
+    b.onclick = function () {
+      var t = $(taId);
+      if (!t) return;
+      t.focus();
+      try { t.setSelectionRange(t.value.length, t.value.length); } catch (e) {}
+      toast("キーボードのマイクを押して話してください");
+    };
+  }
+
   /* 見た目の設定。既定値のときは属性を付けない（CSSの素の値がそのまま効く） */
   var LOOK = [
     { key: "theme",   attr: "data-theme",   def: "auto" },
@@ -1570,6 +1674,11 @@
       paint();
       paintMe();
       loadSkin();
+      /* ホーム画面のアイコンの長押しから「撮る」で開いたとき（manifest の shortcuts） */
+      if (/[?&]cam=1(&|$)/.test(location.search)) {
+        try { history.replaceState(null, "", location.pathname); } catch (e) {}
+        camera();
+      }
       paintTopBar();
       gauge();
       askPersist();
@@ -1736,7 +1845,7 @@
       if (curTag === "none") { if ((it.tags || []).length) return false; }
       else if (curTag !== "all") { if ((it.tags || []).indexOf(curTag) < 0) return false; }
       if (!q) return true;
-      var hay = (it.memo || "") + " " + (it.tags || []).join(" ");
+      var hay = (it.memo || "") + " " + (it.tags || []).join(" ") + " " + fieldText(it);
       return hay.toLowerCase().indexOf(q) >= 0;
     });
     return sortItems(out);
@@ -1752,6 +1861,48 @@
     paintRail();
     paintAd();
     paintStage();
+    placeQuick();
+  }
+
+  /* 同期の具合。上の帯の数字の並びの最後に出す（v128）。
+     ログインしていないときは、オフラインのときだけ出す。
+     オフラインでも撮ったものは端末に残る、と分かればよい */
+  function paintSync() {
+    var m = $("exMeta");
+    if (!m) return;
+    var el = $("syncBit");
+    var off = navigator.onLine === false, t = "", k = "";
+    if (off) { t = "オフライン"; k = "off"; }
+    else if (typeof Shelf !== "undefined" && Shelf && Shelf.linked()) {
+      if (typeof syncing !== "undefined" && syncing) { t = "同期中"; k = "run"; }
+      else if (unsent) { t = "未送信あり"; k = "wait"; }
+      else { t = "同期済み"; k = "ok"; }
+    }
+    if (!t) { if (el) el.remove(); return; }
+    if (!el || el.parentNode !== m) {
+      if (el) el.remove();
+      el = document.createElement("span");
+      el.id = "syncBit";
+      m.appendChild(el);
+    }
+    el.className = "syncbit " + k;
+    el.textContent = t;
+  }
+  window.addEventListener("online", function () { paintSync(); setTimeout(maybeSync, 800); });
+  window.addEventListener("offline", paintSync);
+
+  /* ホームとフォルダの右下に出す「撮る」。1回押せばカメラが開く（v128）。
+     起動したときに勝手にカメラは開かない。毎回すぐ撮るわけではないため。
+     パソコンでは出さない（カメラで撮る道具ではないので） */
+  function placeQuick() {
+    var b = $("quickCam");
+    if (!b) return;
+    var show = (screen === "shelf" || screen === "folder") && !picking && !onDesktop();
+    b.hidden = !show;
+    if (!show) return;
+    var dock = document.querySelector(".dock");
+    b.style.bottom = wideDock() ? "24px"
+      : ((dock ? Math.round(dock.getBoundingClientRect().height) : 92) + 14) + "px";
   }
 
   /* 広告を消してあるか。買い切りで消える */
@@ -1957,6 +2108,7 @@
        押したときだけ回す（押すと quietSync が下りる） */
     if (typeof syncing !== "undefined" && syncing && !quietSync) e.classList.add("working");
     else e.classList.remove("working");
+    paintSync();
   }
 
   function paintMe() {
@@ -2232,7 +2384,7 @@
         bits.push(exs.length + " フォルダ");
         bits.push(((browseAll || []).length) + " 点");
       }
-      $("exMeta").innerHTML = bits.map(function (b) { return "<span>" + b + "</span>"; }).join("");
+      $("exMeta").innerHTML = bits.map(function (b) { return "<span>" + b + "</span>"; }).join(""); paintSync();
       return;
     }
     if (screen === "board") {
@@ -2252,6 +2404,7 @@
         ? "<span>" + pagesOf(bd).length + " ページ</span><span>" + boardCount(bd) + " 枚</span>"
           + (boardWords(bd) ? "<span>文字 " + boardWords(bd) + "</span>" : "")
         : "";
+      paintSync();
       return;
     }
     document.documentElement.setAttribute("data-screen", "folder");
@@ -2276,7 +2429,7 @@
       items.forEach(function (i) { if (i.fav) favN++; });
       if (favN) bits.push("★ " + favN);
     }
-    $("exMeta").innerHTML = bits.map(function (b) { return "<span>" + b + "</span>"; }).join("");
+    $("exMeta").innerHTML = bits.map(function (b) { return "<span>" + b + "</span>"; }).join(""); paintSync();
   }
 
   /* カテゴリの並び順。利用者が入れ替えたぶんを覚えておく。
@@ -2702,7 +2855,7 @@
         if (favOnly && !it.fav) return false;
         if (shelfTag && (it.tags || []).indexOf(shelfTag) < 0) return false;
         if (!q) return true;
-        var hay = (it.memo || "") + " " + (it.tags || []).join(" ");
+        var hay = (it.memo || "") + " " + (it.tags || []).join(" ") + " " + fieldText(it);
         return hay.toLowerCase().indexOf(q) >= 0;
       });
       hits = sortItems(hits).slice(0, 90);
@@ -2985,6 +3138,11 @@
     });
 
     box.addEventListener("pointermove", function (e) {
+      /* 押していないときと、前の画面のタイルを覚えたままのときは何もしない。
+         棚とフォルダは同じ入れものを使うので、写真を押したあと棚に戻って
+         マウスを動かしただけで、消えたタイルの並べ替えが始まり、
+         次に押したフォルダが開かなかった（v128 で直した） */
+      if (!node || !node.isConnected || (byMouse && !e.buttons)) return;
       var far = Math.abs(e.clientX - sx) > 9 || Math.abs(e.clientY - sy) > 9;
       if (!held) {
         if (!far) return;
@@ -3016,10 +3174,12 @@
         eatClick();
         if (!picking) { picking = true; picked = {}; }
         picked[id] = true;
+        node = null;
         paintStage();
         return;
       }
       drop();
+      node = null;
     }
     ["pointerup", "pointercancel", "pointerleave"].forEach(function (k) {
       box.addEventListener(k, function () { release(k, true); });
@@ -3228,6 +3388,7 @@
       + '<button data-pk="all">すべて</button>'
       + '<button data-pk="share"' + (n ? "" : " disabled") + ">共有</button>"
       + '<button data-pk="tag"' + (n ? "" : " disabled") + ">タグ</button>"
+      + '<button data-pk="move"' + (n ? "" : " disabled") + ">移す</button>"
       + '<button data-pk="del" class="bad"' + (n ? "" : " disabled") + ">削除</button>"
       + '<button data-pk="off" class="off">やめる</button>';
     var dock = document.querySelector(".dock");
@@ -3235,6 +3396,7 @@
     Array.prototype.forEach.call(bar.querySelectorAll("[data-pk]"), function (b) {
       b.onclick = function () { pickAct(b.getAttribute("data-pk")); };
     });
+    placeQuick();
   }
 
   function pickOff() {
@@ -3242,6 +3404,7 @@
     var bar = $("pickbar");
     if (bar) bar.remove();
     paintStage();
+    placeQuick();
   }
 
   function pickAct(k) {
@@ -3263,6 +3426,7 @@
       return;
     }
     if (k === "tag") { tagPrompt(ids); return; }
+    if (k === "move") { moveSheet(list); return; }
     if (k === "del") {
       askYesNo({
         title: ids.length + " 件を削除",
@@ -3283,6 +3447,33 @@
         }).catch(function (e) { toast(why(e), true); });
       });
     }
+  }
+
+  /* 選んだものを別のフォルダへ移す（v128）。
+     受け箱に撮りためたものを、あとで振り分けるときに使う。
+     写真そのものは動かさず、記録の「どのフォルダか」だけを書き替える */
+  function moveSheet(list) {
+    if (!list.length) return;
+    sheet('<div class="panel-head"><h3>' + list.length + " 件を移す</h3>"
+      + '<button class="iconbtn" id="mvClose" aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+      + '<div class="panel-body">' + folderRows(null, curEx) + "</div>", "dialog");
+    $("mvClose").onclick = closeSheet;
+    wireFolderRows($("panel"), function (id) {
+      var go = id ? Promise.resolve(exById(id)) : inboxFolder();
+      go.then(function (to) {
+        if (!to) throw new Error("移す先のフォルダが見つかりませんでした。");
+        var rows = list.map(function (it) { it.exId = to.id; return ["items", it]; });
+        return DB.putMany(rows).then(function () {
+          var gone = {};
+          list.forEach(function (it) { gone[it.id] = 1; });
+          items = items.filter(function (it) { return !gone[it.id]; });
+          if (browseAll) browseAll.forEach(function (x) { if (gone[x.id]) x.exId = to.id; });
+          closeSheet();
+          toast(list.length + " 件を「" + to.name + "」へ移しました");
+          pickOff(); paint();
+        });
+      }).catch(function (e) { toast(why(e), true); });
+    });
   }
 
   function welcome() {
@@ -3498,6 +3689,8 @@
     else setView("feed");
   };
   $("fileIn").onchange = function () { addPhotos(this.files); this.value = ""; };
+  $("quickCam").onclick = function () { camera(); };
+  window.addEventListener("resize", placeQuick);
   $("videoIn").onchange = function () { importMedia(this.files, "video"); this.value = ""; };
   $("audioIn").onchange = function () { importMedia(this.files, "audio"); this.value = ""; };
   $("docIn").onchange   = function () { importDocs(this.files); this.value = ""; };
@@ -5357,7 +5550,9 @@
         + '<button class="iconbtn ok" id="mClose" aria-label="完了"><svg><use href="#i-check"/></svg></button></div></div>'
         + '<div class="panel-body">'
         + media
-        + '<div class="field"><label class="label" for="mMemo">メモ</label>'
+        + fieldsHtml(it)
+        + '<div class="field"><div class="labelrow"><label class="label" for="mMemo">メモ</label>'
+        + voiceBtn("mVoice") + "</div>"
         + '<textarea class="ta" id="mMemo" placeholder="' + esc(memoHint()) + '">' + esc(it.memo || "") + "</textarea>"
         + ((!it.memo && memoForm()) ? '<button class="ghost" id="mForm" style="justify-self:start;margin-top:2px">＋ フォーマットを入れる</button>' : "")
         + '<div class="saveflag" id="mFlag"></div></div>'
@@ -5391,10 +5586,13 @@
       $("mClose").onclick = function () {
         /* 700ミリ秒の自動保存を待たずに、いま書いてあるものを残してから閉じる */
         clearTimeout(saveTimer);
+        fw.flush();
         var t = $("mMemo");
         if (t && t.value !== (it.memo || "")) save({ memo: t.value });
         closeSheet();
       };
+      var fw = wireFields($("panel"), it, function (p) { save(p); });
+      wireVoice("mVoice", "mMemo");
 
       /* 左右スワイプで隣の1件へ */
       function step(d) {
@@ -6345,6 +6543,7 @@
   function markUnsent(on) {
     unsent = !!on;
     remember("unsent", on ? "1" : "");
+    paintSync();
   }
   function touched(fast) {
     touchAt = Date.now();
@@ -9931,7 +10130,7 @@
       function hay(it) {
         var ex = exById(it.exId) || {};
         return ((ex.name || "") + " " + (ex.cat || "") + " " + (ex.venue || "")
-          + " " + (it.memo || "") + " " + (it.tags || []).join(" ")).toLowerCase();
+          + " " + (it.memo || "") + " " + (it.tags || []).join(" ") + " " + fieldText(it)).toLowerCase();
       }
       function fill() {
         var q = normQ($("bpQ") ? $("bpQ").value : "");
@@ -10233,16 +10432,113 @@
      アプリ内カメラ
      写真アプリ（カメラロール）には保存されず、このアプリの中だけに入る
      ============================================================ */
+  /* ============================================================
+     アプリ内カメラ（v128 で作り直し）
+     ------------------------------------------------------------
+     ・1枚撮るたびに、すぐ保存する。途中で閉じても、電池が切れても、
+       撮ったぶんは残る（前は「終わる」まで手もとに抱えていた）
+     ・棚（ホーム）からも開ける。そのときは、さっきまで撮っていた
+       フォルダ（12時間以内）に入れる。無ければ「受け箱」に入れる
+     ・上の帯で、入れるフォルダとブランド（タグ）をその場で替えられる
+     ・左下の小さい絵を押すと、いま撮った1枚に価格などを書ける
+     ============================================================ */
+  var CAM_KEEP = 12 * 60 * 60 * 1000;
+
+  /* 受け箱。入れるフォルダを決めずに撮ったものが入る。
+     最初に1枚保存するときに作る（開いて閉じただけで空のフォルダが増えないように） */
+  function inboxFolder() {
+    var ex = null;
+    exs.forEach(function (x) { if (x.inbox) ex = x; });
+    if (ex) return Promise.resolve(ex);
+    ex = { id: uid(), name: dedupeName("受け箱"), cat: "", date: today(),
+           venue: "", note: "", inbox: true, createdAt: Date.now() };
+    return DB.put("exhibitions", ex).then(function () { exs.push(ex); return ex; });
+  }
+  function inboxId() {
+    for (var i = 0; i < exs.length; i++) if (exs[i].inbox) return exs[i].id;
+    return "";
+  }
+  /* どこに入れるか。フォルダの中から開いたらそのフォルダ */
+  function camTarget() {
+    if (screen === "folder" && curEx && exById(curEx)) return curEx;
+    var last = recall("camEx"), ex = exById(last);
+    if (ex && !ex.forBoard && Date.now() - Number(recall("camAt") || 0) < CAM_KEEP) return last;
+    return inboxId();
+  }
+  /* ブランドの候補。そのフォルダで使ったタグを先に、新しい順で */
+  function recentTags(exId) {
+    var pool = (browseAll || []).concat(screen === "folder" ? items : []);
+    pool = pool.slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    var seen = {}, mine = [], rest = [];
+    pool.forEach(function (it) {
+      (it.tags || []).forEach(function (t) {
+        if (seen[t]) return;
+        seen[t] = 1;
+        (exId && it.exId === exId ? mine : rest).push(t);
+      });
+    });
+    return mine.concat(rest).slice(0, 10);
+  }
+  /* 入れる先のフォルダを選ぶ一覧。カメラの中と、選んで移すときで共用 */
+  function folderRows(curId, skipId) {
+    var ib = null, rest = [];
+    exs.forEach(function (x) {
+      if (x.forBoard || x.id === skipId) return;
+      if (x.inbox) ib = x; else rest.push(x);
+    });
+    var rows = [];
+    if (skipId !== undefined ? ib : true) {
+      rows.push('<button class="exrow" data-goex="' + (ib ? ib.id : "") + '" aria-pressed="' + ((ib ? ib.id : "") === (curId || "")) + '">'
+        + "<b>" + esc(ib ? ib.name : "受け箱") + "</b><span>あとで振り分ける</span></button>");
+    }
+    rest.forEach(function (x) {
+      rows.push('<button class="exrow" data-goex="' + x.id + '" aria-pressed="' + (x.id === curId) + '">'
+        + "<b>" + esc(x.name) + "</b><span>" + esc(x.date || "") + "</span></button>");
+    });
+    return '<div class="exrows">' + rows.join("") + "</div>"
+      + '<div class="exnew"><input class="inp" id="exNewName" placeholder="新しいフォルダの名前" autocomplete="off">'
+      + '<button class="cta" id="exNewGo">作る</button></div>';
+  }
+  /* 名前だけで、すぐフォルダを作る。撮っている最中に、作る画面を開かせない */
+  function quickFolder(name) {
+    name = String(name || "").trim();
+    if (!name) return Promise.reject(new Error("名前を入れてください。"));
+    if (nameTaken(name, null)) return Promise.reject(new Error("「" + name + "」はもうあります。別の名前にしてください。"));
+    var rec = { id: uid(), name: name, date: today(), venue: "", note: "", cat: "",
+                tpl: "", form: "", createdAt: Date.now() };
+    return DB.put("exhibitions", rec).then(function () {
+      exs.unshift(rec);
+      exs.sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
+      return rec;
+    });
+  }
+  function wireFolderRows(root, pick) {
+    Array.prototype.forEach.call(root.querySelectorAll("[data-goex]"), function (b) {
+      b.onclick = function () { pick(b.getAttribute("data-goex")); };
+    });
+    var go = root.querySelector("#exNewGo"), inp = root.querySelector("#exNewName");
+    function make() {
+      quickFolder(inp.value).then(function (rec) { pick(rec.id); }, function (e) { toast(why(e), true); inp.focus(); });
+    }
+    if (go) go.onclick = make;
+    if (inp) inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); make(); } };
+  }
+
   function camera() {
-    if (!curEx) { toast("先に" + LL() + "をつくってください。", true); newExDialog(); return; }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       toast("この端末ではアプリ内カメラが使えません。「取り込む」から選んでください。", true);
       return;
     }
 
     var box = $("cam"), stream = null, facing = "environment";
-    var shots = [], busy = false, closed = false;
-    var exAt = curEx, tAt = (curTag !== "all" && curTag !== "none") ? [curTag] : [];
+    var busy = false, closed = false;
+    var exAt = camTarget();
+    var brand = (screen === "folder" && curTag !== "all" && curTag !== "none") ? curTag
+      : (exAt && exAt === recall("camEx") ? (recall("camBrand") || "") : "");
+    /* 撮った数・保存し終えた数。last は最後の1枚 { url, rec, wait } */
+    var count = 0, saved = 0, failed = 0, last = null;
+    var chain = Promise.resolve();
+    var layerFlush = null;
 
     box.className = "cam on";
     document.body.style.overflow = "hidden";
@@ -10270,52 +10566,158 @@
       });
     }
 
+    function whereName() {
+      var ex = exById(exAt);
+      return ex ? ex.name : "受け箱";
+    }
+
     function paintCam() {
-      var where = (exById(exAt) || {}).name || "";
-      if (tAt.length) where += " ／ #" + tAt[0];
       box.innerHTML = '<video id="camV" playsinline autoplay muted></video>'
         + '<div class="camflash" id="camF"></div>'
         + '<div class="cam-top">'
         + '<button id="camX" aria-label="閉じる"><svg><use href="#i-x"/></svg></button>'
-        + '<div class="where">' + esc(where) + "</div>"
+        + '<button class="where" id="camW" aria-label="入れるフォルダを替える"><span id="camWn"></span>'
+        + '<svg><use href="#i-chev"/></svg></button>'
         + '<button id="camFlip" aria-label="前面と背面の切り替え"><svg><use href="#i-flip"/></svg></button>'
         + "</div>"
+        + '<div class="cambrands" id="camB"></div>'
         + '<div class="cam-bot">'
-        + '<div class="tray" id="camTray"><span id="camN">0</span></div>'
+        + '<button class="tray" id="camTray" aria-label="いま撮った1枚に書く"></button>'
         + '<button class="shutter" id="camS" aria-label="撮る"></button>'
         + '<button class="camdone" id="camD">終わる</button>'
-        + "</div>";
+        + "</div>"
+        + '<div class="camlayer" id="camL"></div>';
 
       var v = $("camV");
       v.srcObject = stream;
       v.play().catch(function () {});
 
-      $("camX").onclick = function () {
-        if (!shots.length) { shutdown(); return; }
-        askYesNo({
-          title: "撮ったぶんを捨てますか",
-          body: shots.length + " 枚がまだ保存されていません。",
-          ok: "捨てる"
-        }, function () { shots = []; shutdown(); });
-      };
+      $("camX").onclick = function () { leave(false); };
+      $("camD").onclick = function () { leave(true); };
       $("camFlip").onclick = function () {
         facing = facing === "environment" ? "user" : "environment";
         open();
       };
       $("camS").onclick = shoot;
-      $("camD").onclick = finish;
-      refreshTray();
+      $("camW").onclick = whereLayer;
+      $("camTray").onclick = fieldsLayer;
+      paintWhere(); paintBrands(); paintTray();
     }
 
-    function refreshTray() {
-      var n = $("camN"), tray = $("camTray");
+    function paintWhere() {
+      var n = $("camWn");
+      if (n) n.textContent = whereName();
+    }
+
+    function paintBrands() {
+      var row = $("camB");
+      if (!row) return;
+      var list = recentTags(exAt);
+      if (brand && list.indexOf(brand) < 0) list.unshift(brand);
+      row.innerHTML = '<span class="cbl">ブランド</span>'
+        + '<button data-cb="" aria-pressed="' + (!brand) + '">なし</button>'
+        + list.map(function (t) {
+            return '<button data-cb="' + esc(t) + '" aria-pressed="' + (t === brand) + '">' + esc(t) + "</button>";
+          }).join("")
+        + '<button class="cbadd" id="camBAdd" aria-label="ブランドを足す">＋</button>';
+      Array.prototype.forEach.call(row.querySelectorAll("[data-cb]"), function (b) {
+        b.onclick = function () { setBrand(b.getAttribute("data-cb")); };
+      });
+      $("camBAdd").onclick = brandLayer;
+    }
+    function setBrand(t) {
+      brand = t || "";
+      remember("camBrand", brand);
+      paintBrands();
+    }
+
+    function paintTray() {
+      var tray = $("camTray");
       if (!tray) return;
-      if (!shots.length) {
-        tray.innerHTML = '<span id="camN" style="opacity:.7">0</span>';
-        return;
+      var wait = count > saved + failed;
+      tray.className = "tray" + (wait ? " saving" : "");
+      if (!last) { tray.innerHTML = '<span style="opacity:.7">0</span>'; return; }
+      tray.innerHTML = '<img src="' + last.url + '" alt=""><b>' + saved + "</b>";
+    }
+
+    /* カメラの上に重ねる小窓。下に寄せて、写真の大半は見えたままにする */
+    function layer(html) {
+      var L = $("camL");
+      if (!L) return null;
+      L.innerHTML = '<div class="campanel">' + html + "</div>";
+      L.className = "camlayer on";
+      L.onclick = function (e) { if (e.target === L) unlayer(); };
+      Array.prototype.forEach.call(L.querySelectorAll("[data-lx]"), function (b) { b.onclick = unlayer; });
+      return L;
+    }
+    function unlayer() {
+      if (layerFlush) { var f = layerFlush; layerFlush = null; f(); }
+      var L = $("camL");
+      if (L) { L.className = "camlayer"; L.innerHTML = ""; }
+    }
+
+    function whereLayer() {
+      var L = layer('<div class="camhead"><b>入れるフォルダ</b>'
+        + '<button data-lx aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+        + '<div class="cambody">' + folderRows(exAt) + "</div>");
+      if (!L) return;
+      wireFolderRows(L, function (id) {
+        if (id !== exAt) {
+          exAt = id;
+          /* フォルダを替えたら、ブランドは外す。前のブランドのまま撮り続けないように */
+          setBrand("");
+          remember("camEx", exAt); remember("camAt", String(Date.now()));
+        }
+        unlayer(); paintWhere(); paintBrands();
+      });
+    }
+
+    function brandLayer() {
+      var L = layer('<div class="camhead"><b>ブランドを足す</b>'
+        + '<button data-lx aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
+        + '<div class="cambody"><div class="exnew"><input class="inp" id="camBName" placeholder="ブランドの名前" autocomplete="off">'
+        + '<button class="cta" id="camBGo">決定</button></div></div>');
+      if (!L) return;
+      var inp = $("camBName");
+      function go() {
+        var v = inp.value.trim().replace(/^[#＃]+/, "");
+        if (!v) { inp.focus(); return; }
+        unlayer(); setBrand(v);
       }
-      var last = shots[shots.length - 1];
-      tray.innerHTML = '<img src="' + last.url + '" alt=""><b>' + shots.length + "</b>";
+      $("camBGo").onclick = go;
+      inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); go(); } };
+      setTimeout(function () { inp.focus(); }, 50);
+    }
+
+    /* いま撮った1枚に書く。保存し終わるのを待ってから開く */
+    function fieldsLayer() {
+      if (!last) return;
+      var shot = last;
+      shot.wait.then(function (rec) {
+        if (!rec || closed) return;
+        var L = layer('<div class="camhead"><img src="' + shot.url + '" alt=""><b>この1枚に書く</b>'
+          + '<button class="ok" data-lx aria-label="完了"><svg><use href="#i-check"/></svg></button></div>'
+          + '<div class="cambody">' + fieldsHtml(rec)
+          + '<div class="labelrow"><label class="label" for="camMemo">メモ</label>' + voiceBtn("camVoice") + "</div>"
+          + '<textarea class="ta" id="camMemo">' + esc(rec.memo || "") + "</textarea></div>");
+        if (!L) return;
+        function put(p) {
+          Object.keys(p).forEach(function (k) { rec[k] = p[k]; });
+          DB.put("items", rec).catch(function (e) { toast(why(e), true); });
+        }
+        var fw = wireFields(L, rec, put);
+        var memo = $("camMemo"), mt = null, mv = null;
+        memo.oninput = function () {
+          mv = memo.value;
+          clearTimeout(mt);
+          mt = setTimeout(function () { mt = null; put({ memo: mv }); }, 600);
+        };
+        layerFlush = function () {
+          fw.flush();
+          if (mt) { clearTimeout(mt); mt = null; put({ memo: mv }); }
+        };
+        wireVoice("camVoice", "camMemo");
+      });
     }
 
     function shoot() {
@@ -10332,36 +10734,50 @@
       c.toBlob(function (b) {
         busy = false;
         if (!b) { toast("撮影できませんでした。", true); return; }
-        shots.push({ blob: b, url: URL.createObjectURL(b) });
-        refreshTray();
+        count++;
+        var shot = { url: URL.createObjectURL(b), rec: null };
+        if (last) { try { URL.revokeObjectURL(last.url); } catch (e) {} }
+        last = shot;
+        /* 押した瞬間の入れ先とブランドで保存する。あとで替えても、撮ったものは動かない */
+        var where = exAt, tags = brand ? [brand] : [];
+        shot.wait = chain = chain.then(function () {
+          var ex = exById(where);
+          return (ex ? Promise.resolve(ex) : inboxFolder()).then(function (ex) {
+            if (!where || !exById(where)) {
+              where = ex.id;
+              if (!exAt || !exById(exAt)) { exAt = ex.id; paintWhere(); }
+            }
+            return savePhoto(b, ex.id, tags, 0);
+          });
+        }).then(function (rec) {
+          saved++; shot.rec = rec;
+          remember("camEx", rec.exId); remember("camAt", String(Date.now()));
+          paintTray();
+          return rec;
+        }, function (e) {
+          failed++;
+          toast(why(e), true);
+          paintTray();
+          return null;
+        });
+        paintTray();
       }, "image/jpeg", 0.92);
     }
 
-    function finish() {
-      if (!shots.length) { shutdown(); return; }
-      var mine = shots.slice();
-      shots = [];
+    /* 閉じる。保存の途中なら、終わるのを待ってから画面を描き直す。
+       open を立てると、撮ったフォルダを開く */
+    function leave(openIt) {
+      unlayer();
+      var n = count;
       shutdown();
-      progress(3);
-      toast(mine.length + " 枚を保存しています…");
-      var done = 0, failed = 0, lastErr = "", added = [];
-      var chain = Promise.resolve();
-      mine.forEach(function (sh, i) {
-        chain = chain.then(function () {
-          return savePhoto(sh.blob, exAt, tAt, i).then(function (rec) { done++; if (rec) added.push(rec.id); }, function (e) {
-            failed++; lastErr = why(e);
-          }).then(function () {
-            try { URL.revokeObjectURL(sh.url); } catch (e) {}
-            progress(3 + Math.round(((done + failed) / mine.length) * 94));
-          });
-        });
-      });
+      if (!n) return;
       chain.then(function () {
-        progress(100);
-        items.sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
-        paint(); gauge();
-        if (failed) toast(lastErr, true);
-        else tagPrompt(added);
+        var go = openIt && exAt && exById(exAt) ? openFolder(exAt) : Promise.resolve(paint());
+        return go.then(function () {
+          gauge();
+          if (failed) toast(failed + " 枚を保存できませんでした。", true);
+          else toast(saved + " 枚を「" + whereName() + "」に保存しました");
+        });
       });
     }
 
@@ -10369,7 +10785,7 @@
       closed = true;
       if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
       stream = null;
-      shots.forEach(function (sh) { try { URL.revokeObjectURL(sh.url); } catch (e) {} });
+      if (last) { try { URL.revokeObjectURL(last.url); } catch (e) {} }
       box.className = "cam";
       box.innerHTML = "";
       document.body.style.overflow = "";
