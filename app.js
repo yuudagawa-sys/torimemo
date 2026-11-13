@@ -10,7 +10,7 @@
      切り替わったかどうかを、画面の側でも分かるようにしてある。
      黙って新しくなっていると、直したはずのものが
      届いているのか分からない */
-  var APPVER = "128";
+  var APPVER = "129";
 
   /* ============================================================
      小道具
@@ -1899,7 +1899,13 @@
     if (!b) return;
     var show = (screen === "shelf" || screen === "folder") && !picking && !onDesktop();
     b.hidden = !show;
+    /* 撮るボタンが出ている間は、知らせ（トースト）をその上に出す。
+       撮って戻った直後の「保存しました」が、ボタンに重ならないように */
+    document.documentElement.setAttribute("data-quick", show ? "on" : "");
     if (!show) return;
+    /* 棚では、決めておいた入れ先を小さく出す。押す前にどこへ入るか分かるように */
+    var to = $("quickTo"), ex = screen === "shelf" ? exById(savedTarget()) : null;
+    if (to) { to.textContent = ex ? ex.name : ""; to.hidden = !ex; }
     var dock = document.querySelector(".dock");
     b.style.bottom = wideDock() ? "24px"
       : ((dock ? Math.round(dock.getBoundingClientRect().height) : 92) + 14) + "px";
@@ -10437,12 +10443,13 @@
      ------------------------------------------------------------
      ・1枚撮るたびに、すぐ保存する。途中で閉じても、電池が切れても、
        撮ったぶんは残る（前は「終わる」まで手もとに抱えていた）
-     ・棚（ホーム）からも開ける。そのときは、さっきまで撮っていた
-       フォルダ（12時間以内）に入れる。無ければ「受け箱」に入れる
-     ・上の帯で、入れるフォルダとブランド（タグ）をその場で替えられる
+     ・自動仕分け（v129）：入れるフォルダを一度選べば、替えるまでずっと
+       そこに入れる。棚（ホーム）から開いても同じフォルダに入る。
+       何も選んでいないときだけ「受け箱」に入れる
+     ・上の札で、入れるフォルダとブランド（タグ）をその場で替えられる。
+       フォルダもブランドと同じく、押すだけで替わる札にした（v129）
      ・左下の小さい絵を押すと、いま撮った1枚に価格などを書ける
      ============================================================ */
-  var CAM_KEEP = 12 * 60 * 60 * 1000;
 
   /* 受け箱。入れるフォルダを決めずに撮ったものが入る。
      最初に1枚保存するときに作る（開いて閉じただけで空のフォルダが増えないように） */
@@ -10458,12 +10465,39 @@
     for (var i = 0; i < exs.length; i++) if (exs[i].inbox) return exs[i].id;
     return "";
   }
-  /* どこに入れるか。フォルダの中から開いたらそのフォルダ */
+  /* どこに入れるか。フォルダの中から開いたらそのフォルダ。
+     棚から開いたら、前に選んだフォルダ（替えるまでずっと）。前は12時間で切れていた */
   function camTarget() {
-    if (screen === "folder" && curEx && exById(curEx)) return curEx;
+    if (screen === "folder" && curEx && exById(curEx) && !exById(curEx).forBoard) return curEx;
+    return savedTarget() || inboxId();
+  }
+  function savedTarget() {
     var last = recall("camEx"), ex = exById(last);
-    if (ex && !ex.forBoard && Date.now() - Number(recall("camAt") || 0) < CAM_KEEP) return last;
-    return inboxId();
+    return ex && !ex.forBoard ? last : "";
+  }
+  /* 入れ先に選んだ。次から棚で開いてもここに入る。札の並びも前に寄せる */
+  function setTarget(id) {
+    remember("camEx", id || "");
+    if (!id) return;
+    var r = camRecent().filter(function (x) { return x !== id; });
+    r.unshift(id);
+    remember("camRecent", JSON.stringify(r.slice(0, 20)));
+  }
+  function camRecent() {
+    try { var r = JSON.parse(recall("camRecent") || "[]"); return Array.isArray(r) ? r : []; } catch (e) { return []; }
+  }
+  /* フォルダの札に並べる順。最近入れた先 → 日付の新しいフォルダ。受け箱は札の最後 */
+  function folderChips(cur) {
+    var seen = {}, out = [];
+    function add(id) {
+      var ex = exById(id);
+      if (!ex || ex.forBoard || ex.inbox || seen[id]) return;
+      seen[id] = 1; out.push(ex);
+    }
+    add(cur);
+    camRecent().forEach(add);
+    exs.forEach(function (x) { add(x.id); });
+    return out.slice(0, 8);
   }
   /* ブランドの候補。そのフォルダで使ったタグを先に、新しい順で */
   function recentTags(exId) {
@@ -10570,16 +10604,18 @@
       var ex = exById(exAt);
       return ex ? ex.name : "受け箱";
     }
+    /* 前に選んだ入れ先がまだ無いなら（初めて・消した）、何も選んでいない扱い */
+    if (exAt && !exById(exAt)) exAt = "";
 
     function paintCam() {
       box.innerHTML = '<video id="camV" playsinline autoplay muted></video>'
         + '<div class="camflash" id="camF"></div>'
         + '<div class="cam-top">'
         + '<button id="camX" aria-label="閉じる"><svg><use href="#i-x"/></svg></button>'
-        + '<button class="where" id="camW" aria-label="入れるフォルダを替える"><span id="camWn"></span>'
-        + '<svg><use href="#i-chev"/></svg></button>'
+        + '<span class="camspace"></span>'
         + '<button id="camFlip" aria-label="前面と背面の切り替え"><svg><use href="#i-flip"/></svg></button>'
         + "</div>"
+        + '<div class="cambrands camfolders" id="camFo"></div>'
         + '<div class="cambrands" id="camB"></div>'
         + '<div class="cam-bot">'
         + '<button class="tray" id="camTray" aria-label="いま撮った1枚に書く"></button>'
@@ -10599,14 +10635,35 @@
         open();
       };
       $("camS").onclick = shoot;
-      $("camW").onclick = whereLayer;
       $("camTray").onclick = fieldsLayer;
       paintWhere(); paintBrands(); paintTray();
     }
 
+    /* フォルダの札。ブランドの札と同じ形で、押せばそこが入れ先になる */
     function paintWhere() {
-      var n = $("camWn");
-      if (n) n.textContent = whereName();
+      var row = $("camFo");
+      if (!row) return;
+      var ib = inboxId(), list = folderChips(exAt);
+      var onInbox = !exAt || exAt === ib;
+      row.innerHTML = '<span class="cbl">フォルダ</span>'
+        + list.map(function (x) {
+            return '<button data-cf="' + x.id + '" aria-pressed="' + (x.id === exAt) + '">' + esc(x.name) + "</button>";
+          }).join("")
+        + '<button data-cf="' + ib + '" aria-pressed="' + onInbox + '">受け箱</button>'
+        + '<button class="cbadd" id="camFAdd" aria-label="フォルダを選ぶ・作る">＋</button>';
+      Array.prototype.forEach.call(row.querySelectorAll("[data-cf]"), function (b) {
+        b.onclick = function () { pickWhere(b.getAttribute("data-cf")); };
+      });
+      $("camFAdd").onclick = whereLayer;
+    }
+    function pickWhere(id) {
+      if (id !== exAt) {
+        exAt = id;
+        /* フォルダを替えたら、ブランドは外す。前のブランドのまま撮り続けないように */
+        setBrand("");
+      }
+      setTarget(exAt);
+      paintWhere(); paintBrands();
     }
 
     function paintBrands() {
@@ -10661,15 +10718,7 @@
         + '<button data-lx aria-label="閉じる"><svg><use href="#i-x"/></svg></button></div>'
         + '<div class="cambody">' + folderRows(exAt) + "</div>");
       if (!L) return;
-      wireFolderRows(L, function (id) {
-        if (id !== exAt) {
-          exAt = id;
-          /* フォルダを替えたら、ブランドは外す。前のブランドのまま撮り続けないように */
-          setBrand("");
-          remember("camEx", exAt); remember("camAt", String(Date.now()));
-        }
-        unlayer(); paintWhere(); paintBrands();
-      });
+      wireFolderRows(L, function (id) { unlayer(); pickWhere(id); });
     }
 
     function brandLayer() {
@@ -10750,8 +10799,9 @@
             return savePhoto(b, ex.id, tags, 0);
           });
         }).then(function (rec) {
+          /* 入れ先は、札で選んだときだけ覚える。フォルダの中から開いて
+             1枚足しただけで、決めておいた入れ先が替わらないように */
           saved++; shot.rec = rec;
-          remember("camEx", rec.exId); remember("camAt", String(Date.now()));
           paintTray();
           return rec;
         }, function (e) {
@@ -10789,6 +10839,7 @@
       box.className = "cam";
       box.innerHTML = "";
       document.body.style.overflow = "";
+      placeQuick();
     }
   }
 

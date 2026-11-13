@@ -2388,14 +2388,9 @@ html.fxopen, html.fxopen body{overflow:hidden}
 }
 :root[data-theme="dark"] .quickcam{box-shadow:0 3px 16px rgba(0,0,0,.55)}
 
-/* カメラの上の帯：入れるフォルダ（押すと替えられる） */
-.cam-top .where{
-  display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:62vw;
-  font-size:13px; padding:6px 10px; border-radius:999px; background:rgba(0,0,0,.35);
-}
-.cam-top .where span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.cam-top .where svg{width:14px; height:14px; flex:0 0 auto; transform:rotate(90deg)}
-/* ブランドの札。横に送れる */
+/* カメラの上の帯の真ん中は空ける（入れるフォルダは下の札で選ぶ。v129） */
+.cam-top .camspace{flex:1}
+/* フォルダとブランドの札。横に送れる。フォルダが上、ブランドがその下 */
 .cambrands{
   position:absolute; left:0; right:0; z-index:2;
   top:calc(54px + env(safe-area-inset-top));
@@ -2410,6 +2405,15 @@ html.fxopen, html.fxopen body{overflow:hidden}
 }
 .cambrands button[aria-pressed="true"]{background:#fff; color:#000; border-color:#fff; font-weight:600}
 .cambrands .cbadd{padding:5px 11px}
+#camB{top:calc(94px + env(safe-area-inset-top))}
+.cambrands .cbl{min-width:4.2em}
+/* 撮るボタンの、決めておいた入れ先 */
+.quickcam small{
+  font-size:11.5px; font-weight:500; letter-spacing:.02em; opacity:.9;
+  max-width:9em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.quickcam small[hidden]{display:none}
+.quickcam small::before{content:"→ "}
 .tray{border:0; padding:0}
 .tray.saving::after{
   content:""; position:absolute; left:4px; bottom:4px; width:8px; height:8px; border-radius:50%;
@@ -2472,3 +2476,7 @@ html.fxopen, html.fxopen body{overflow:hidden}
 .syncbit.ok{color:var(--ink3)}
 .syncbit.wait, .syncbit.run{color:var(--ink2)}
 .syncbit.off{color:var(--mark)}
+
+/* 撮るボタンが出ている間は、知らせをボタンの上に出す（v129） */
+:root[data-quick="on"] .toast{ bottom:calc(166px + env(safe-area-inset-bottom)); }
+:root[data-quick="on"][data-ad="on"] .toast{ bottom:calc(166px + var(--adh) + env(safe-area-inset-bottom)); }
